@@ -1,0 +1,168 @@
+{% extends "base.html" %}
+{% block extra_style %}
+<style>
+.slot-card { transition: transform 0.2s; }
+.slot-card:hover { transform: translateY(-3px); }
+.instance-row { padding: 6px 0; border-bottom: 1px solid #eee; }
+.instance-row:last-child { border-bottom: none; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h4>预约广场</h4>
+    <a href="/booking/publish" class="btn btn-primary"><i class="bi bi-plus-circle"></i> 发布时段</a>
+</div>
+
+{% if one_time_slots %}
+<h5 class="mb-3"><i class="bi bi-calendar-event text-warning"></i> 一次性活动</h5>
+<div class="row row-cols-1 row-cols-md-2 g-4 mb-4">
+{% for item in one_time_slots %}
+<div class="col">
+    <div class="card slot-card p-3">
+        <div class="d-flex justify-content-between align-items-start mb-2">
+            <h6 class="mb-0">{{ item.slot.title }}</h6>
+            <span class="badge bg-warning text-dark">一次性</span>
+        </div>
+        {% if item.slot.description %}<p class="text-muted small mb-2">{{ item.slot.description }}</p>{% endif %}
+        <div class="mb-2">
+            <span class="badge bg-light text-dark me-1"><i class="bi bi-calendar3"></i> {{ item.slot.specific_date }}</span>
+            <span class="badge bg-light text-dark me-1"><i class="bi bi-clock"></i> {{ "%02d:00" | format(item.slot.start_hour) }}-{{ "%02d:00" | format(item.slot.end_hour) }}</span>
+            <span class="badge bg-light text-dark"><i class="bi bi-person"></i> {{ item.slot.publisher }}</span>
+        </div>
+        {% for inst in item.instances %}
+        <div class="instance-row d-flex justify-content-between align-items-center">
+            <div>
+                <span class="text-muted small">{{ inst.date }}</span>
+                {% if inst.bookers %}
+                <span class="text-muted small ms-1">({{ inst.bookers | join(', ') }})</span>
+                {% endif %}
+                <span class="badge {% if inst.remaining > 0 %}bg-success{% else %}bg-secondary{% endif %} small ms-1">
+                    {{ inst.booked_count }}/{{ item.slot.capacity }}
+                </span>
+            </div>
+            <div>
+                {% if item.slot.publisher == current_user %}
+                    <span class="badge bg-light text-dark small">自己发布</span>
+                {% elif inst.user_booked %}
+                    <form method="POST" action="/booking/cancel/{{ inst.user_booking_id }}" class="d-inline">
+                        <span class="badge bg-info small">已预约</span>
+                        <button type="submit" class="btn btn-outline-danger btn-sm ms-1">取消</button>
+                    </form>
+                {% elif inst.remaining > 0 %}
+                    <form method="POST" action="/booking/book/{{ item.slot.id }}/{{ inst.date }}" class="d-inline">
+                        <button type="submit" class="btn btn-outline-primary btn-sm">预约</button>
+                    </form>
+                {% else %}
+                    <span class="badge bg-secondary small">已满</span>
+                {% endif %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endfor %}
+</div>
+{% endif %}
+
+{% if recurring_slots %}
+<h5 class="mb-3"><i class="bi bi-arrow-repeat text-info"></i> 长期预约</h5>
+<div class="row row-cols-1 row-cols-md-2 g-4 mb-4">
+{% for item in recurring_slots %}
+<div class="col">
+    <div class="card slot-card p-3">
+        <div class="d-flex justify-content-between align-items-start mb-2">
+            <h6 class="mb-0">{{ item.slot.title }}</h6>
+            <span class="badge bg-info text-dark">长期</span>
+        </div>
+        {% if item.slot.description %}<p class="text-muted small mb-2">{{ item.slot.description }}</p>{% endif %}
+        <div class="mb-2">
+            <span class="badge bg-light text-dark me-1"><i class="bi bi-calendar3"></i> 每{{ day_names[item.slot.day_of_week] }}</span>
+            <span class="badge bg-light text-dark me-1"><i class="bi bi-clock"></i> {{ "%02d:00" | format(item.slot.start_hour) }}-{{ "%02d:00" | format(item.slot.end_hour) }}</span>
+            <span class="badge bg-light text-dark"><i class="bi bi-person"></i> {{ item.slot.publisher }}</span>
+        </div>
+        {% for inst in item.instances %}
+        <div class="instance-row d-flex justify-content-between align-items-center">
+            <div>
+                <span class="text-muted small">{{ inst.date }}</span>
+                {% if inst.bookers %}
+                <span class="text-muted small ms-1">({{ inst.bookers | join(', ') }})</span>
+                {% endif %}
+                <span class="badge {% if inst.remaining > 0 %}bg-success{% else %}bg-secondary{% endif %} small ms-1">
+                    {{ inst.booked_count }}/{{ item.slot.capacity }}
+                </span>
+            </div>
+            <div>
+                {% if item.slot.publisher == current_user %}
+                    <span class="badge bg-light text-dark small">自己发布</span>
+                {% elif inst.user_booked %}
+                    <form method="POST" action="/booking/cancel/{{ inst.user_booking_id }}" class="d-inline">
+                        <span class="badge bg-info small">已预约</span>
+                        <button type="submit" class="btn btn-outline-danger btn-sm ms-1">取消</button>
+                    </form>
+                {% elif inst.remaining > 0 %}
+                    <form method="POST" action="/booking/book/{{ item.slot.id }}/{{ inst.date }}" class="d-inline">
+                        <button type="submit" class="btn btn-outline-primary btn-sm">预约</button>
+                    </form>
+                {% else %}
+                    <span class="badge bg-secondary small">已满</span>
+                {% endif %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endfor %}
+</div>
+{% endif %}
+
+{% if not one_time_slots and not recurring_slots %}
+<div class="card p-4 text-center mb-4">
+    <p class="text-muted">暂无可预约时段，点击上方按钮发布你的空闲时间吧!</p>
+</div>
+{% endif %}
+
+{% if my_slots %}
+<h5 class="mb-3"><i class="bi bi-calendar2-plus text-primary"></i> 我发布的时段</h5>
+<div class="card p-3 mb-4">
+{% for slot in my_slots %}
+<div class="d-flex justify-content-between align-items-center py-2 {% if not loop.last %}border-bottom{% endif %}">
+    <div>
+        <strong>{{ slot.title }}</strong>
+        {% if slot.slot_type == 'recurring' %}
+        <span class="badge bg-info text-dark small ms-1">每{{ day_names[slot.day_of_week] }} {{ "%02d:00" | format(slot.start_hour) }}-{{ "%02d:00" | format(slot.end_hour) }}</span>
+        {% else %}
+        <span class="badge bg-warning text-dark small ms-1">{{ slot.specific_date }} {{ "%02d:00" | format(slot.start_hour) }}-{{ "%02d:00" | format(slot.end_hour) }}</span>
+        {% endif %}
+    </div>
+    <form method="POST" action="/booking/cancel_slot/{{ slot.id }}" class="d-inline">
+        <button type="submit" class="btn btn-outline-danger btn-sm">取消发布</button>
+    </form>
+</div>
+{% endfor %}
+</div>
+{% endif %}
+
+{% if my_bookings %}
+<h5 class="mb-3"><i class="bi bi-calendar2-check text-success"></i> 我的预约</h5>
+<div class="card p-3 mb-4">
+{% for b in my_bookings %}
+<div class="d-flex justify-content-between align-items-center py-2 {% if not loop.last %}border-bottom{% endif %}">
+    <div>
+        <strong>{{ b.title }}</strong>
+        {% if b.slot_type == 'recurring' %}
+        <span class="badge bg-info text-dark small ms-1">每{{ day_names[b.day_of_week] }}</span>
+        {% else %}
+        <span class="badge bg-warning text-dark small ms-1">{{ b.specific_date }}</span>
+        {% endif %}
+        <span class="badge bg-light text-dark small ms-1">{{ b.instance_date }} {{ "%02d:00" | format(b.start_hour) }}-{{ "%02d:00" | format(b.end_hour) }}</span>
+        <span class="text-muted small ms-1">by {{ b.publisher }}</span>
+    </div>
+    <form method="POST" action="/booking/cancel/{{ b.id }}" class="d-inline">
+        <button type="submit" class="btn btn-outline-danger btn-sm">取消预约</button>
+    </form>
+</div>
+{% endfor %}
+</div>
+{% endif %}
+{% endblock %}

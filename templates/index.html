@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block content %}
+{% if carousel_data %}
+<div id="bookingCarousel" class="carousel slide mb-4" data-bs-ride="carousel" data-bs-interval="4000">
+    <div class="carousel-indicators">
+        {% for item in carousel_data %}
+        <button type="button" data-bs-target="#bookingCarousel" data-bs-slide-to="{{ loop.index0 }}"
+                {% if loop.index0 == 0 %}class="active" aria-current="true"{% endif %}></button>
+        {% endfor %}
+    </div>
+    <div class="carousel-inner">
+        {% for item in carousel_data %}
+        <div class="carousel-item {% if loop.index0 == 0 %}active{% endif %}">
+            <div class="card p-4 text-center" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border-radius: 15px; min-height: 120px;">
+                <h5><i class="bi bi-calendar-event"></i> {{ item.slot.title }}</h5>
+                <p class="mb-1">{{ item.slot.specific_date }} {{ "%02d:00" | format(item.slot.start_hour) }}-{{ "%02d:00" | format(item.slot.end_hour) }}</p>
+                <p class="mb-2"><i class="bi bi-person"></i> {{ item.slot.publisher }}
+                {% if item.slot.description %}<span class="small ms-2">{{ item.slot.description }}</span>{% endif %}</p>
+                <span class="badge bg-light text-dark">
+                    {% if item.remaining > 0 %}剩余 {{ item.remaining }} 个名额{% else %}已满{% endif %}
+                </span>
+                <div class="mt-2">
+                    <a href="/booking" class="btn btn-sm btn-outline-light">去预约广场</a>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% if carousel_data | length > 1 %}
+    <button class="carousel-control-prev" type="button" data-bs-target="#bookingCarousel" data-bs-slide="prev">
+        <span class="carousel-control-prev-icon"></span>
+    </button>
+    <button class="carousel-control-next" type="button" data-bs-target="#bookingCarousel" data-bs-slide="next">
+        <span class="carousel-control-next-icon"></span>
+    </button>
+    {% endif %}
+</div>
+{% endif %}
+
+<div class="card p-4">
+    <h4 class="mb-4">团队成员</h4>
+    <table class="table table-hover align-middle">
+        <thead class="table-light"><tr><th>UID</th><th>姓名</th><th>最后签到</th><th>绑定/更新</th></tr></thead>
+        <tbody>
+            {% for r in records %}
+            <tr>
+                <td><a href="/detail/{{r.uid}}" class="text-decoration-none fw-bold">{{r.uid}}</a></td>
+                <td><span class="badge {% if r.name %}bg-success{% else %}bg-secondary{% endif %}">{{r.name or '未绑定'}}</span></td>
+                <td>{{r.last_time}}</td>
+                <td>
+                    <form action="/bind" method="POST" class="d-flex align-items-center">
+                        <input type="hidden" name="uid" value="{{r.uid}}">
+                        <div class="d-flex align-items-center flex-grow-1 me-2">
+                            <input type="text" name="name" id="name-{{r.uid}}" class="form-control form-control-sm"
+                                   placeholder="输入姓名" required
+                                   {% if r.name %}disabled value="{{r.name}}"{% endif %}>
+                            {% if r.name %}
+                            <i class="bi bi-pencil-square ms-2 text-primary edit-pencil"
+                               style="cursor:pointer; font-size:1.2rem;"
+                               onclick="enableEdit('{{r.uid}}')"></i>
+                            {% endif %}
+                        </div>
+                        <button type="submit" class="btn btn-primary btn-sm">保存</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<script>
+function enableEdit(uid) {
+    var input = document.getElementById('name-' + uid);
+    input.disabled = false;
+    input.focus();
+    input.select();
+    // Hide the pencil icon
+    var pencil = input.parentElement.querySelector('.edit-pencil');
+    if (pencil) pencil.style.display = 'none';
+}
+</script>
+{% endblock %}
