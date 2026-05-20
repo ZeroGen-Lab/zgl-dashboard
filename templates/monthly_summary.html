@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block extra_style %}
+<style>
+    #summary-table th:nth-child(1), #summary-table td:nth-child(1) { width: 12%; }
+    #summary-table th:nth-child(2), #summary-table td:nth-child(2) { width: 24%; }
+    #summary-table th:nth-child(3), #summary-table td:nth-child(3) { width: 24%; }
+    #summary-table th:nth-child(4), #summary-table td:nth-child(4) { width: 40%; }
+    .md-content { font-size: 0.85em; }
+    .md-content p { margin: 0 0 0.4em 0; }
+    .md-content ul, .md-content ol { margin: 0 0 0.4em 0; padding-left: 1.2em; }
+    .md-content li { margin-bottom: 0.1em; }
+    .md-content h1, .md-content h2, .md-content h3 { margin: 0.3em 0; font-size: 1em; }
+    #summary-table td:nth-child(n+1) { vertical-align: middle; }
+</style>
+{% endblock %}
+{% block content %}
+<div class="card p-4 mb-4">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h4 class="mb-0">Monthly Summary: {{ date_range }}</h4>
+        <div>
+            <a href="/monthly_summary?month_offset={{ month_offset + 1 }}" class="btn btn-outline-secondary btn-sm me-2">
+                <i class="bi bi-arrow-left"></i> Previous Month
+            </a>
+            {% if month_offset > 0 %}
+            <a href="/monthly_summary?month_offset={{ month_offset - 1 }}" class="btn btn-outline-secondary btn-sm">
+                Next Month <i class="bi bi-arrow-right"></i>
+            </a>
+            {% endif %}
+        </div>
+    </div>
+    <table id="summary-table" class="table table-striped text-center">
+        <thead class="table-dark">
+            <tr>
+                <th>Name</th>
+                <th>Weekly Plans</th>
+                <th>Completion Summary (AI)</th>
+                <th>Suggestion (AI)</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for s in summary_list %}
+            <tr>
+                <td>
+                    <strong>{{ s.name }}</strong><br>
+                    <small class="text-muted">{{ s.onsite_days }} onsite days <br> {{ s.completion_count }} d-completions</small>
+                </td>
+                <td>
+                    ({{ s.plan_count }})
+                    {% if s.weekly_plans_text %}
+                    <br><small class="text-muted" style="white-space: pre-line;">{{ s.weekly_plans_text }}</small>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if s.summary %}
+                    <div class="md-content" data-md="{{ s.summary | e }}"></div>
+                    {% elif s.completion_count > 0 %}
+                    <form method="post" action="/monthly_summary/generate_summary/{{ s.uid }}">
+                        <input type="hidden" name="month_offset" value="{{ month_offset }}">
+                        <button type="submit" class="btn btn-outline-primary btn-md" title="Generate summary"><i class="bi bi-stars"></i></button>
+                    </form>
+                    {% else %}
+                    <small class="text-muted">—</small>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if s.suggestion %}
+                    <div class="md-content" data-md="{{ s.suggestion | e }}"></div>
+                    {% elif s.completion_count > 0 %}
+                    <form method="post" action="/monthly_summary/generate_suggestion/{{ s.uid }}">
+                        <input type="hidden" name="month_offset" value="{{ month_offset }}">
+                        <button type="submit" class="btn btn-outline-primary btn-md" title="Generate suggestion"><i class="bi bi-stars"></i></button>
+                    </form>
+                    {% else %}
+                    <small class="text-muted">—</small>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+<script src="https://cdn.bootcdn.net/ajax/libs/marked/12.0.2/marked.min.js"></script>
+<script>
+document.querySelectorAll('.md-content').forEach(function(el) {
+    el.innerHTML = marked.parse(el.getAttribute('data-md'));
+});
+</script>
+{% endblock %}

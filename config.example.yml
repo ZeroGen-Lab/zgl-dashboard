@@ -1,0 +1,28 @@
+# ZGL Dashboard 配置示例文件
+# 复制此文件为 .config.yml 并填写实际值
+# cp config.example.yml .config.yml
+
+# 生产环境配置
+server:
+  db_path: attendance.db
+  port: 5000
+  secret_key: YOUR_SECRET_KEY_HERE
+  api_secret: YOUR_API_SECRET_HERE
+  allowed_checkin_ips:
+    - YOUR_RASPBERRY_PI_IP_HERE
+  dingtalk_webhook_url: https://oapi.dingtalk.com/robot/send?access_token=YOUR_ACCESS_TOKEN
+  dingtalk_secret: SEC_YOUR_SIGN_SECRET_HERE
+  deepseek_api_key: YOUR_DEEPSEEK_API_KEY
+  deepseek_base_url: https://api.deepseek.com
+
+# 预发环境配置（python app.py pre 或 ZGL_ENV=pre python app.py）
+# 未指定的字段回退到 server 的值
+pre:
+  db_path: attendance_pre.db
+  port: 5001
+
+# 端侧（树莓派）配置
+client:
+  server_url: http://YOUR_SERVER_IP:5000
+  db_path: attendance.db
+  api_secret: YOUR_API_SECRET_HERE

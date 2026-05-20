@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ZGL数字看板</title>
+    <link href="https://cdn.bootcdn.net/ajax/libs/twitter-bootstrap/5.1.3/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.bootcdn.net/ajax/libs/bootstrap-icons/1.8.1/font/bootstrap-icons.css" rel="stylesheet">
+    <script src="https://cdn.bootcdn.net/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+    <style>
+        body { background-color: #f4f7f6; }
+        .navbar {
+        margin-bottom: 30px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        position: sticky;
+        top: 0;
+        z-index: 1000;
+    }
+        .card { border: none; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
+    </style>
+    {% block extra_style %}{% endblock %}
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+        <div class="container">
+            <span class="navbar-brand">ZGL数字看板</span>
+            <div class="navbar-nav gap-3">
+                <a class="nav-link {% if page=='index' %}active{% endif %}" href="/"><i class="bi bi-people-fill"></i> Members</a>
+                <a class="nav-link {% if page=='stats' %}active{% endif %}" href="/stats"><i class="bi bi-bar-chart-line-fill"></i> Onsite Stat</a>
+                <a class="nav-link {% if page=='booking' %}active{% endif %}" href="/booking"><i class="bi bi-calendar2-check"></i> Bookings</a>
+                <a class="nav-link {% if page=='monthly_summary' %}active{% endif %}" href="/monthly_summary"><i class="bi bi-clipboard-data"></i> Monthly Summary</a>
+                <a class="nav-link" href="javascript:location.reload()" title="Refresh">
+                    <i class="bi bi-arrow-clockwise"></i> Refresh
+                </a>
+            </div>
+            {% if session.get('user') %}
+            <div class="navbar-nav ms-auto">
+                <span class="nav-link text-light"><i class="bi bi-person-circle"></i> {{ session['user'] }}</span>
+                <a class="nav-link" href="/logout"><i class="bi bi-box-arrow-right"></i> Logout</a>
+            </div>
+            {% endif %}
+        </div>
+    </nav>
+
+    <div class="container">
+        {% with messages = get_flashed_messages() %}
+        {% if messages %}
+        <div class="alert alert-info alert-dismissible fade show mb-3">
+            {% for message in messages %}{{ message }}{% endfor %}
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
+        {% endif %}
+        {% endwith %}
+        {% block content %}{% endblock %}
+    </div>
+
+    {% if session.get('user') %}
+    <script>
+    (function() {
+        var cols = 5, rows = 5;
+        for (var r = 0; r < rows; r++) {
+            for (var c = 0; c < cols; c++) {
+                var wm = document.createElement('div');
+                wm.textContent = '{{ session["user"] }}';
+                wm.style.cssText = [
+                    'position: fixed',
+                    'font-size: 18px',
+                    'color: rgba(0,0,0,0.08)',
+                    'pointer-events: none',
+                    'z-index: 9999',
+                    'user-select: none',
+                    'transform: rotate(-15deg)',
+                    'left: ' + (c * 20 + 10) + '%',
+                    'top: ' + (r * 20 + 10) + '%'
+                ].join(';');
+                document.body.appendChild(wm);
+            }
+        }
+    })();
+    </script>
+    {% endif %}
+    <script src="https://cdn.bootcdn.net/ajax/libs/twitter-bootstrap/5.1.3/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

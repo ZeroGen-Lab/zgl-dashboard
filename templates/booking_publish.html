@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% block extra_style %}
+<style>
+.form-section { display: none; }
+.form-section.active { display: block; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h4>发布新时段</h4>
+    <a href="/booking" class="btn btn-outline-secondary"><i class="bi bi-arrow-left"></i> 返回广场</a>
+</div>
+
+<div class="card p-4">
+<form method="POST" action="/booking/publish">
+    <div class="mb-3">
+        <label class="form-label fw-bold">类型</label>
+        <div>
+            <div class="form-check form-check-inline">
+                <input class="form-check-input" type="radio" name="slot_type" id="type_recurring" value="recurring" checked onchange="toggleFields()">
+                <label class="form-check-label" for="type_recurring">长期预约（每周固定）</label>
+            </div>
+            <div class="form-check form-check-inline">
+                <input class="form-check-input" type="radio" name="slot_type" id="type_one_time" value="one_time" onchange="toggleFields()">
+                <label class="form-check-label" for="type_one_time">一次性活动</label>
+            </div>
+        </div>
+    </div>
+
+    <div id="recurring_fields" class="form-section active mb-3">
+        <label class="form-label fw-bold" for="day_of_week">每周哪一天</label>
+        <select class="form-select" name="day_of_week" id="day_of_week">
+            <option value="0">周一</option>
+            <option value="1">周二</option>
+            <option value="2">周三</option>
+            <option value="3">周四</option>
+            <option value="4">周五</option>
+            <option value="5">周六</option>
+            <option value="6">周日</option>
+        </select>
+    </div>
+
+    <div id="one_time_fields" class="form-section mb-3">
+        <label class="form-label fw-bold" for="specific_date">具体日期</label>
+        <input type="date" class="form-control" name="specific_date" id="specific_date" min="{{ today }}">
+    </div>
+
+    <div class="mb-3">
+        <label class="form-label fw-bold" for="title">标题</label>
+        <input type="text" class="form-control" name="title" id="title" maxlength="50" placeholder="简短描述，如：象棋交流、电影之夜" required>
+    </div>
+
+    <div class="mb-3">
+        <label class="form-label fw-bold" for="description">详细说明（可选）</label>
+        <textarea class="form-control" name="description" id="description" maxlength="200" rows="2" placeholder="补充说明，如：一起看最新上映的电影..."></textarea>
+    </div>
+
+    <div class="row mb-3">
+        <div class="col-md-4">
+            <label class="form-label fw-bold" for="start_hour">开始时间</label>
+            <select class="form-select" name="start_hour" id="start_hour">
+                {% for h in range(24) %}
+                <option value="{{ h }}" {% if h == 20 %}selected{% endif %}>{{ "%02d:00" | format(h) }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-4">
+            <label class="form-label fw-bold" for="end_hour">结束时间</label>
+            <select class="form-select" name="end_hour" id="end_hour">
+                {% for h in range(1, 25) %}
+                <option value="{{ h }}" {% if h == 21 %}selected{% endif %}>{{ "%02d:00" | format(h % 24) }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-4">
+            <label class="form-label fw-bold" for="capacity">容量（最多预约人数）</label>
+            <input type="number" class="form-control" name="capacity" id="capacity" min="1" max="10" value="1">
+        </div>
+    </div>
+
+    <button type="submit" class="btn btn-primary w-100"><i class="bi bi-plus-circle"></i> 发布</button>
+</form>
+</div>
+
+<script>
+var today = new Date().toISOString().split('T')[0];
+document.getElementById('specific_date').setAttribute('min', today);
+document.getElementById('specific_date').value = today;
+
+function toggleFields() {
+    var isRecurring = document.getElementById('type_recurring').checked;
+    document.getElementById('recurring_fields').classList.toggle('active', isRecurring);
+    document.getElementById('one_time_fields').classList.toggle('active', !isRecurring);
+    // Toggle required attributes
+    document.getElementById('day_of_week').required = isRecurring;
+    document.getElementById('specific_date').required = !isRecurring;
+}
+toggleFields();
+</script>
+{% endblock %}

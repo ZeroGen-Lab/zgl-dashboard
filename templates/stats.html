@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% block extra_style %}
+<style>
+    .heatmap-cell {
+        width: 18px; height: 18px;
+        border-radius: 2px;
+        margin: 1px;
+        display: inline-block;
+        cursor: pointer;
+    }
+    .heatmap-cell.active { background-color: #28a745; }
+    .heatmap-cell.inactive { background-color: #dee2e6; }
+    .heatmap-label {
+        font-size: 0.75rem;
+        min-width: 90px;
+        text-align: right;
+        padding-right: 4px;
+    }
+    .heatmap-date {
+        font-size: 0.65rem;
+        color: #6c757d;
+        text-align: center;
+        min-width: 13px;
+    }
+    .heatmap-row {
+        display: flex;
+        align-items: center;
+        overflow-x: auto;
+        white-space: nowrap;
+    }
+</style>
+{% endblock %}
+{% block content %}
+<div class="card p-4 mb-4">
+    <h4 class="mb-4">Onsite 统计（单位: 天）</h4>
+    <table class="table table-striped text-center">
+        <thead class="table-dark">
+            <tr><th>姓名 (UID)</th><th>近15天</th><th>近60天</th><th>近180天</th><th>{{ last_month_label }}</th></tr>
+        </thead>
+        <tbody>
+            {% for s in stats %}
+            <tr>
+                <td><strong>{{s.name}}</strong> <small class="text-muted">({{s.uid}})</small></td>
+                <td>{{s.d15}} 天</td><td>{{s.d60}} 天</td><td>{{s.d180}} 天</td><td>{{s.last_month}} 天</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<div class="card p-4 mb-4">
+    <h5 class="mb-3">近30天 Onsite 天数统计</h5>
+    <canvas id="barChart" height="{{ uid_count * 30 }}"></canvas>
+</div>
+
+<div class="card p-4">
+    <h5 class="mb-3">近8周活跃热力图</h5>
+    <div class="heatmap-row mb-2">
+        <span class="heatmap-date" style="min-width:90px;"></span>
+        {% for i in range(56) %}
+        <span class="heatmap-date" style="min-width:18.5px;">{% if i == 0 or i % 7 == 6 %}{{ heatmap_dates[i] }}{% endif %}</span>
+        {% endfor %}
+    </div>
+    {% for uid, name, days in heatmap_data %}
+    <div class="heatmap-row mb-1">
+        <span class="heatmap-label">{{ name }}</span>
+        {% for i in range(56) %}
+        <span class="heatmap-cell {% if days[i] %}active{% else %}inactive{% endif %}"
+              title="{{ heatmap_dates[i] }}"
+              style="cursor:pointer;"></span>
+        {% endfor %}
+    </div>
+    {% endfor %}
+</div>
+
+<script>
+var ctx = document.getElementById('barChart').getContext('2d');
+new Chart(ctx, {
+    type: 'bar',
+    data: {
+        labels: {{ bar_labels | tojson }},
+        datasets: [{
+            label: '签到天数',
+            data: {{ bar_data | tojson }},
+            backgroundColor: 'rgba(40, 167, 69, 0.7)',
+            borderColor: 'rgba(40, 167, 69, 1)',
+            borderWidth: 1
+        }]
+    },
+    options: {
+        indexAxis: 'y',
+        responsive: true,
+        plugins: { legend: { display: false } },
+        scales: {
+            x: {
+                beginAtZero: true,
+                title: { display: true, text: '天数' },
+                min: 0,
+                max: 30,
+                ticks: { stepSize: 5 }
+            },
+            y: {
+                ticks: { stepSize: 1 }
+            }
+        }
+    }
+});
+</script>
+{% endblock %}

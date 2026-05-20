@@ -1,0 +1,14 @@
+# 敏感配置文件（包含 secret_key、api_secret、IP 白名单等）
+.config.yml
+.users.txt
+
+# SQLite 数据库
+attendance.db
+attendance_pre.db
+
+# Python
+__pycache__/
+*.pyc
+
+# Claude
+.claude/*

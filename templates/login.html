@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card p-4" style="max-width: 400px; margin: 0 auto;">
+    <h4 class="mb-4 text-center">登录 ZGL 活跃看板</h4>
+    {% if error %}
+    <div class="alert alert-danger">{{ error }}</div>
+    {% endif %}
+    <form method="POST" action="/login">
+        <div class="mb-3">
+            <label class="form-label">用户名</label>
+            <input type="text" name="username" class="form-control" required autofocus>
+        </div>
+        <div class="mb-3">
+            <label class="form-label">密码</label>
+            <input type="password" name="password" class="form-control" required>
+        </div>
+        <button type="submit" class="btn btn-primary w-100">登录</button>
+    </form>
+</div>
+{% endblock %}
