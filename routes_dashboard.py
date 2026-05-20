@@ -1,7 +1,8 @@
-from flask import Blueprint, render_template, request, redirect, url_for
+from flask import Blueprint, render_template, request, redirect, url_for, flash
 from datetime import datetime, timedelta
 from db import get_db_connection
 from auth import login_required
+from helpers import compute_summary_week_range, generate_weekly_summary, compute_month_range, generate_monthly_summary
 
 dashboard_bp = Blueprint('dashboard', __name__)
 
@@ -10,6 +11,15 @@ dashboard_bp = Blueprint('dashboard', __name__)
 @login_required
 def index():
     conn = get_db_connection()
+
+    # delete sign-ins by unknown users (after 3 days) to keep the table clean
+    cutoff = (datetime.now() - timedelta(days=3)).strftime('%Y-%m-%d %H:%M:%S')
+    conn.execute(
+        'DELETE FROM sign_ins WHERE uid NOT IN (SELECT uid FROM users) AND timestamp < ?',
+        (cutoff,)
+    )
+    conn.commit()
+
     sql = '''
         SELECT s.uid, MAX(s.timestamp) as last_time, u.name
         FROM sign_ins s
@@ -210,3 +220,75 @@ def detail(uid):
                            date_range=date_range,
                            prev_offset=prev_offset, next_offset=next_offset,
                            recent_checkins=recent_checkins)
+
+
+@dashboard_bp.route('/weekly_summary')
+@login_required
+def weekly_summary():
+    offset = request.args.get('offset', 0, type=int)
+    if offset < 0:
+        offset = 0
+    summary_monday, summary_sunday, _, _ = compute_summary_week_range(offset)
+    date_range = f"{summary_monday.strftime('%Y-%m-%d')} ~ {summary_sunday.strftime('%Y-%m-%d')}"
+    summary_list = generate_weekly_summary(offset)
+    return render_template('weekly_summary.html', page='weekly_summary',
+                           summary_list=summary_list, date_range=date_range,
+                           offset=offset)
+
+
+@dashboard_bp.route('/monthly_summary')
+@login_required
+def monthly_summary():
+    offset = request.args.get('month_offset', 0, type=int)
+    if offset < 0:
+        offset = 0
+    start_date, end_date, month_key = compute_month_range(offset)
+    date_range = f"{start_date.strftime('%Y-%m')}"
+    summary_list = generate_monthly_summary(offset)
+    return render_template('monthly_summary.html', page='monthly_summary',
+                           summary_list=summary_list, date_range=date_range,
+                           month_key=month_key, month_offset=offset)
+
+
+@dashboard_bp.route('/monthly_summary/generate_summary/<uid>', methods=['POST'])
+@login_required
+def generate_summary(uid):
+    offset = request.form.get('month_offset', 0, type=int)
+    _, _, month_key = compute_month_range(offset)
+    summary_list = generate_monthly_summary(offset)
+    member = next((s for s in summary_list if s['uid'] == uid), None)
+    if not member:
+        flash('成员不存在或该月无活动')
+        return redirect(url_for('dashboard.monthly_summary', month_offset=offset))
+    if member['summary']:
+        flash('该成员的摘要已生成，无需重复生成')
+        return redirect(url_for('dashboard.monthly_summary', month_offset=offset))
+    from llm import generate_daily_summary
+    result = generate_daily_summary(uid, member['name'], member['daily_completions_text'])
+    if result:
+        flash(f'{member["name"]} 的月度摘要已生成')
+    else:
+        flash('摘要生成失败，请检查 DeepSeek API 配置')
+    return redirect(url_for('dashboard.monthly_summary', month_offset=offset))
+
+
+@dashboard_bp.route('/monthly_summary/generate_suggestion/<uid>', methods=['POST'])
+@login_required
+def generate_suggestion(uid):
+    offset = request.form.get('month_offset', 0, type=int)
+    _, _, month_key = compute_month_range(offset)
+    summary_list = generate_monthly_summary(offset)
+    member = next((s for s in summary_list if s['uid'] == uid), None)
+    if not member:
+        flash('成员不存在或该月无活动')
+        return redirect(url_for('dashboard.monthly_summary', month_offset=offset))
+    if member['suggestion']:
+        flash('该成员的工作建议已生成，无需重复生成')
+        return redirect(url_for('dashboard.monthly_summary', month_offset=offset))
+    from llm import generate_work_suggestion
+    result = generate_work_suggestion(uid, member['name'], member['daily_completions_text'], member['weekly_plans_text'])
+    if result:
+        flash(f'{member["name"]} 的工作建议已生成')
+    else:
+        flash('工作建议生成失败，请检查 DeepSeek API 配置')
+    return redirect(url_for('dashboard.monthly_summary', month_offset=offset))

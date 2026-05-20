@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-ZGL 组织活跃看板系统，包含 IC 卡签到、团队工作规划/进度跟踪、预约广场功能。采用端侧-服务端分离架构。Web 页面需要登录认证（用户名来自 `.users.txt`，密码规则见源码），API 接口需要 HMAC-SHA256 按日轮换 token 认证。签到 API 额外要求端侧 IP 白名单。
+ZGL 组织活跃看板系统，包含 IC 卡签到、团队工作规划/进度跟踪、预约广场、周报摘要功能。采用端侧-服务端分离架构。Web 页面需要登录认证（用户名来自 `.users.txt`，密码规则见源码），API 接口需要 HMAC-SHA256 按日轮换 token 认证。签到 API 额外要求端侧 IP 白名单。
 
 ## Running
 
@@ -22,12 +22,13 @@ sudo python3 checkin_usb.py
 
 **端侧-服务端分离 + 服务端 Blueprint 模块化架构：**
 
-- **`app.py`**（入口）：创建 Flask app，加载配置，注册 4 个 Blueprint，启动服务
-- **`config.py`**：从 `.config.yml` 加载配置，导出模块级全局变量（`DB_PATH`, `API_SECRET`, `ALLOWED_CHECKIN_IPS`, `SECRET_KEY`）
+- **`app.py`**（入口）：创建 Flask app，加载配置，注册 4 个 Blueprint，启动服务；若配置了钉钉 webhook 则启动 APScheduler 周一定时推送周报
+- **`config.py`**：从 `.config.yml` 加载配置，导出模块级全局变量（`DB_PATH`, `API_SECRET`, `ALLOWED_CHECKIN_IPS`, `SECRET_KEY`, `DINGTALK_WEBHOOK_URL`, `DINGTALK_SECRET`）
 - **`db.py`**：数据库连接（`get_db_connection()`）和 6 张表的初始化（`ensure_tables()`）
 - **`auth.py`**：认证基础设施——用户集（`.users.txt`）、HMAC token 生成/验证、装饰器（`login_required`, `token_required`, `checkin_ip_required`）
-- **`helpers.py`**：业务辅助函数（`compute_week_key`, `compute_upcoming_instances`）
-- **`routes_dashboard.py`**：Blueprint——首页、绑定、统计、详情
+- **`helpers.py`**：业务辅助函数（`compute_week_key`, `compute_upcoming_instances`, `compute_summary_week_range`, `generate_weekly_summary`）
+- **`notifier.py`**：钉钉群机器人消息推送（`send_dingtalk_markdown`），支持 HMAC-SHA256 加签
+- **`routes_dashboard.py`**：Blueprint——首页、绑定、统计、详情、周报摘要
 - **`routes_booking.py`**：Blueprint（url_prefix='/booking'）——预约广场全部路由
 - **`routes_api.py`**：Blueprint（url_prefix='/api'）——签到、每周计划、每日完成 API
 - **`routes_auth.py`**：Blueprint——登录/登出
@@ -64,6 +65,7 @@ SQLite（`attendance.db`），六张表：
 | `/bind` | POST | login | 表单绑定 UID 与姓名 |
 | `/stats` | GET | login | 考勤统计（15/60/180天+上月）+ 柱状图 + 热力图 |
 | `/detail/<uid>` | GET | login | 单人日历详情（4周视图，支持 ?offset=N 翻页） |
+| `/weekly_summary` | GET | login | 周报摘要（出勤天数 + 日报数 + 周计划提交状态，支持 ?offset=N 翻页） |
 | `/booking` | GET | login | 预约广场主页 |
 | `/booking/publish` | GET/POST | login | 发布新预约时段 |
 | `/booking/book/<slot_id>/<instance_date>` | POST | login | 预约某个时段实例 |
@@ -82,11 +84,12 @@ SQLite（`attendance.db`），六张表：
 - `templates/detail.html` — 日历详情页（4周视图 + 计划/完成 + 近30条刷卡明细）
 - `templates/booking.html` — 预约广场主页（一次性/长期卡片 + 我的预约/发布）
 - `templates/booking_publish.html` — 发布预约时段表单
+- `templates/weekly_summary.html` — 周报摘要页（出勤/日报/周计划表格 + 翻页）
 
 ## Configuration
 
 所有敏感配置集中在 `.config.yml`，由 `config.py`（服务端）和 `checkin_usb.py` 通过 `yaml.safe_load()` 统一读取：
-- 服务端：`db_path`、`secret_key`、`api_secret`、`allowed_checkin_ips`
+- 服务端：`db_path`、`secret_key`、`api_secret`、`allowed_checkin_ips`、`dingtalk_webhook_url`、`dingtalk_secret`
 - 端侧：`server_url`、`db_path`、`api_secret`
 
 部署流程：`cp config.example.yml .config.yml` → 编辑实际值
@@ -95,11 +98,12 @@ SQLite（`attendance.db`），六张表：
 
 ## File List
 
-- `app.py` — 服务端入口（Flask app + Blueprint 注册）
+- `app.py` — 服务端入口（Flask app + Blueprint 注册 + APScheduler 定时任务）
 - `config.py` — 配置加载（.config.yml → 模块级全局）
 - `db.py` — 数据库连接与表初始化
 - `auth.py` — 认证基础设施（用户集、HMAC token、装饰器）
 - `helpers.py` — 业务辅助函数
+- `notifier.py` — 钉钉群机器人消息推送
 - `routes_auth.py` — Blueprint: 登录/登出
 - `routes_dashboard.py` — Blueprint: 首页/绑定/统计/详情
 - `routes_booking.py` — Blueprint: 预约广场
@@ -114,5 +118,5 @@ SQLite（`attendance.db`），六张表：
 
 ## Dependencies
 
-第三方依赖（见 `environment.yml`）：Flask、flask-cors、requests、PyYAML、evdev、gunicorn
+第三方依赖（见 `environment.yml`）：Flask、flask-cors、requests、PyYAML、apscheduler、evdev、gunicorn
 标准库依赖（无需安装）：sqlite3、hmac、hashlib、os、datetime、threading

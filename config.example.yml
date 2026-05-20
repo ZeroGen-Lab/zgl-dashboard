@@ -10,6 +10,10 @@ server:
   api_secret: YOUR_API_SECRET_HERE
   allowed_checkin_ips:
     - YOUR_RASPBERRY_PI_IP_HERE
+  dingtalk_webhook_url: https://oapi.dingtalk.com/robot/send?access_token=YOUR_ACCESS_TOKEN
+  dingtalk_secret: SEC_YOUR_SIGN_SECRET_HERE
+  deepseek_api_key: YOUR_DEEPSEEK_API_KEY
+  deepseek_base_url: https://api.deepseek.com
 
 # 预发环境配置（python app.py pre 或 ZGL_ENV=pre python app.py）
 # 未指定的字段回退到 server 的值

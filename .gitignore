@@ -4,6 +4,7 @@
 
 # SQLite 数据库
 attendance.db
+attendance_pre.db
 
 # Python
 __pycache__/

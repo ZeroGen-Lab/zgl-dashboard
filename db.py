@@ -50,5 +50,12 @@ def ensure_tables():
                      status TEXT DEFAULT 'active' CHECK(status IN ('active', 'cancelled')),
                      booked_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                      UNIQUE(slot_id, booker, instance_date))''')
+    conn.execute('''CREATE TABLE IF NOT EXISTS monthly_summaries
+                    (uid TEXT NOT NULL,
+                     month_key TEXT NOT NULL,
+                     summary TEXT,
+                     suggestion TEXT,
+                     generated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                     UNIQUE(uid, month_key))''')
     conn.commit()
     conn.close()

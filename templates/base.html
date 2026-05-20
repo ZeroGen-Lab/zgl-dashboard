@@ -24,18 +24,19 @@
     <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
         <div class="container">
             <span class="navbar-brand">ZGL数字看板</span>
-            <div class="navbar-nav">
-                <a class="nav-link {% if page=='index' %}active{% endif %}" href="/">团队成员</a>
-                <a class="nav-link {% if page=='stats' %}active{% endif %}" href="/stats">Onsite统计</a>
-                <a class="nav-link {% if page=='booking' %}active{% endif %}" href="/booking"><i class="bi bi-calendar2-check"></i> 预约广场</a>
-                <a class="nav-link" href="javascript:location.reload()" title="刷新">
-                    <i class="bi bi-arrow-clockwise"></i> 刷新
+            <div class="navbar-nav gap-3">
+                <a class="nav-link {% if page=='index' %}active{% endif %}" href="/"><i class="bi bi-people-fill"></i> Members</a>
+                <a class="nav-link {% if page=='stats' %}active{% endif %}" href="/stats"><i class="bi bi-bar-chart-line-fill"></i> Onsite Stat</a>
+                <a class="nav-link {% if page=='booking' %}active{% endif %}" href="/booking"><i class="bi bi-calendar2-check"></i> Bookings</a>
+                <a class="nav-link {% if page=='monthly_summary' %}active{% endif %}" href="/monthly_summary"><i class="bi bi-clipboard-data"></i> Monthly Summary</a>
+                <a class="nav-link" href="javascript:location.reload()" title="Refresh">
+                    <i class="bi bi-arrow-clockwise"></i> Refresh
                 </a>
             </div>
             {% if session.get('user') %}
             <div class="navbar-nav ms-auto">
                 <span class="nav-link text-light"><i class="bi bi-person-circle"></i> {{ session['user'] }}</span>
-                <a class="nav-link" href="/logout"><i class="bi bi-box-arrow-right"></i> 登出</a>
+                <a class="nav-link" href="/logout"><i class="bi bi-box-arrow-right"></i> Logout</a>
             </div>
             {% endif %}
         </div>
