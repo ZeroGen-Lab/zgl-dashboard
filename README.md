@@ -37,7 +37,8 @@ echo "your_username" > .users.txt
 ### 4. 启动服务端
 
 ```bash
-python app.py    # 启动在 0.0.0.0:5000
+python app.py       # 启动在 0.0.0.0:5000
+python app.py pre   # 预发环境，启动在 0.0.0.0:5001 (见config.yml)
 ```
 
 ### 5. 启动端侧（可部署在树莓派上）
@@ -46,7 +47,40 @@ python app.py    # 启动在 0.0.0.0:5000
 sudo python3 checkin_usb.py
 ```
 
-建议将以上服务端与端侧程序都部署为 systemd 服务。
+建议将以上服务端与端侧程序都部署为 systemd 服务，如服务端服务配置文件存于
+/etc/systemd/system/dashboard.service
+
+```bash
+[Unit]
+Description=ZGL Dashboard Flask App
+After=network.target
+
+[Service]
+Type=simple
+User=xxx
+WorkingDirectory=/xxx/.../zgl-dashboard
+ExecStart=/.../bin/python app.py
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Linux 系统服务 (Systemd) 相关命令：
+```bash
+sudo systemctl start dashboard      # 启动服务
+sudo systemctl stop dashboard       # 停止服务
+sudo systemctl restart dashboard    # 重启服务
+sudo systemctl enable dashboard     # 开机自启
+sudo systemctl disable dashboard    # 取消开机自启
+sudo systemctl status dashboard     # 查看服务状态
+
+sudo systemctl daemon-reload        # 修改dashboard.service 配置后必须让系统重新加载配置，否则修改不生效。
+
+sudo journalctl -u dashboard -f     # 实时滚动查看新日志
+sudo journalctl -u dashboard --since "1 hour ago"   # 查看最近 1 小时内的日志
+```
 
 ## 登录认证
 
