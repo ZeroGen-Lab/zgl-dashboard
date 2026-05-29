@@ -61,7 +61,8 @@ def daily_completion():
     content = data['content']
     if len(content) > 100:
         return jsonify({'success': False, 'message': '每日完成情况内容不能超过100字'}), 400
-    date = data.get('date', datetime.now().strftime('%Y-%m-%d'))
+    six_hour_ago = datetime.now() - timedelta(hours=6)
+    date = six_hour_ago.strftime('%Y-%m-%d')
 
     conn = get_db_connection()
     conn.execute("INSERT OR REPLACE INTO daily_completions (uid, date, content) VALUES (?, ?, ?)",
