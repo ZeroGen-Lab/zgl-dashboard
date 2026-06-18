@@ -1,0 +1,368 @@
+{% extends "base.html" %}
+{% block extra_style %}
+<style>
+    /* Typography — Objective title > KR title > KR milestone */
+    h4.okr-title { font-size: 1.6rem; }
+    .section-title { font-size: 1.3rem; font-weight: 600; }
+    .card-header { font-size: 1.0rem; padding: 10px 16px; }
+    .obj-title { font-size: 1.15rem; }
+    .kr-item strong { font-size: 1.05rem; }
+    .text-muted { font-size: 0.9rem; }
+    .milestone { font-size: 0.95rem; }
+    .milestone-date { font-size: 0.78rem; color: #aaa; }
+
+    /* Layout */
+    .okr-header { position: relative; display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 18px; }
+    .okr-header select { width: auto; text-align: center; text-align-last: center; }
+    .status-center { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); white-space: nowrap; }
+    .obj-card { border-left: 4px solid #0d6efd; margin-bottom: 14px; }
+    .obj-card .card-header { background: transparent; border-bottom: 1px dashed #dee2e6; }
+    .obj-card.rejected { border-left-color: #adb5bd; opacity: 0.6; }
+    .obj-card.rejected .card-header .obj-title { text-decoration: line-through; }
+    .kr-item { border-left: 3px solid #adb5bd; padding: 10px 12px; margin: 6px 0; background: #f8f9fa; border-radius: 6px; }
+    .kr-item.pending-edit { border-left-color: #ffc107; }
+    .pending-diff { background: #fff8e1; border-left: 3px solid #ffc107; padding: 6px 10px; margin: 6px 0; border-radius: 4px; font-size: 0.85rem; }
+    .milestone { display: flex; align-items: center; gap: 8px; padding: 2px 0; }
+
+    /* Numbering */
+    .o-number, .kr-number { color: #0d6efd; font-weight: 600; margin-right: 4px; font-size: 1.0rem; }
+
+    /* KR owner (gray, in parens, no badge) */
+    .kr-owner { color: #6c757d; font-size: 0.9rem; }
+
+    /* OKR progress: O bars/badges green, KR bars/badges indigo; O bar longer so its left edge aligns with KR's */
+    .okr-progress { height: 8px; background: #e5e7eb; }
+    .obj-card .card-header .okr-progress { width: 112px; }
+    .kr-item .okr-progress { width: 100px; }
+    .progress-bar.o-fill { background-color: #198754; }
+    .progress-bar.kr-fill { background-color: #695ad7; }
+    .badge.o-progress { background-color: #198754; color: #fff; font-weight: 600; }
+    .badge.kr-progress { background-color: #695ad7; color: #fff; font-weight: 600; }
+
+    /* Forms */
+    .submit-form { display: flex; gap: 8px; align-items: center; }
+    .submit-form > input.form-control { flex: 1 1 auto; }
+    .submit-form > button { flex: 0 0 auto; }
+
+    /* KR-internal action forms: right-aligned, input grows to fill row */
+    .kr-item .submit-form { justify-content: flex-end; }
+    /* Update progress: number input centered, wider */
+    .kr-item form[id^="kr-progress-"] input[name="progress"] {
+        flex: 0 0 auto;
+        width: 100px;
+        text-align: center;
+    }
+    /* KR-internal submit buttons (Update/Add/Save/Submit): equal width */
+    .kr-item .submit-form > button:not(.btn-link) {
+        min-width: 100px;
+    }
+
+    /* KR action buttons: right-aligned, equal width, green/blue/yellow */
+    .kr-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+    .kr-actions .btn { padding: 2px 12px; font-size: 0.8rem; min-width: 140px; text-align: center; }
+
+    /* Admin review: right-aligned, same button width */
+    .kr-admin-review { display: flex; gap: 6px; justify-content: flex-end; margin-top: 6px; }
+    .kr-admin-review .btn { padding: 2px 12px; font-size: 0.8rem; min-width: 140px; text-align: center; }
+
+    /* Modal: compact */
+    #confirmModal .modal-body { font-size: 0.85rem; padding: 14px 16px; }
+    #confirmModal .modal-footer { border-top: 0; padding: 0 16px 14px; }
+    #confirmModal .btn { font-size: 0.8rem; padding: 4px 14px; }
+</style>
+{% endblock %}
+
+{% block content %}
+
+{% set next_status = {'brainstorming': 'planning', 'planning': 'active', 'active': 'closed'} %}
+{% set is_committed = cycle is not none and cycle.status in ['planning', 'active', 'closed'] %}
+
+<!-- Header -->
+<div class="okr-header">
+    <h4 class="mb-0 okr-title"><i class="bi bi-bullseye"></i> OKR</h4>
+    <select class="form-select form-select-sm" onchange="location.href='?cycle='+this.value">
+        {% for c in cycles %}
+        <option value="{{ c.cycle_key }}" {% if c.cycle_key == selected_cycle %}selected{% endif %}>
+            {{ c.label }}{% if c.is_current %} (current){% endif %}
+        </option>
+        {% endfor %}
+    </select>
+    {% if cycle %}
+    <span class="text-dark status-center">Current cycle status: <strong>{{ cycle.status|capitalize }}</strong></span>
+    {% if is_admin and cycle.status in next_status %}
+    <form method="POST" action="{{ url_for('okr.cycle_change_status') }}" class="d-inline ms-auto"
+          data-confirm="Go to {{ next_status[cycle.status] }} phase?">
+        <input type="hidden" name="cycle_key" value="{{ selected_cycle }}">
+        <input type="hidden" name="status" value="{{ next_status[cycle.status] }}">
+        <button class="btn btn-sm btn-outline-dark">Go to {{ next_status[cycle.status]|capitalize }}</button>
+    </form>
+    {% endif %}
+    {% endif %}
+</div>
+
+{% if not cycle %}
+<div class="alert alert-secondary">Cycle {{ selected_cycle }} not created yet.</div>
+{% if is_admin %}
+<form method="POST" action="{{ url_for('okr.cycle_start') }}" style="display:inline"
+      data-confirm="Create cycle {{ selected_cycle }}?">
+    <input type="hidden" name="cycle_key" value="{{ selected_cycle }}">
+    <button class="btn btn-primary"><i class="bi bi-plus-circle"></i> Create Cycle {{ selected_cycle }}</button>
+</form>
+{% endif %}
+
+{% else %}
+
+{% if cycle.status == 'brainstorming' %}
+<div class="card mb-3">
+    <div class="card-header"><i class="bi bi-lightbulb"></i> Submit Objective Candidate</div>
+    <div class="card-body">
+        <form method="POST" action="{{ url_for('okr.objective_draft') }}" class="submit-form">
+            <input type="hidden" name="cycle_key" value="{{ selected_cycle }}">
+            <input name="title" class="form-control" placeholder="Objective candidate title" required>
+            <button class="btn btn-outline-primary"><i class="bi bi-send"></i> Submit</button>
+        </form>
+    </div>
+</div>
+{% endif %}
+
+{% if objectives %}
+<div class="section-title mb-3">
+    <i class="bi bi-flag-fill text-primary"></i>
+    {% if cycle.status == 'active' %}Created Objectives
+    {% elif cycle.status == 'planning' %}Created Objectives
+    {% elif cycle.status == 'brainstorming' %}Draft Objectives
+    {% else %}Objectives Overview{% endif %}
+    <span class="text-muted">({{ objectives|length }})</span>
+</div>
+
+{% for obj in objectives %}
+<div class="card obj-card {% if obj.status == 'rejected' %}rejected{% endif %}">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <div class="d-flex align-items-center gap-2 flex-grow-1">
+            {% if is_committed %}<span class="o-number">O{{ loop.index }}</span>{% endif %}
+            <strong class="obj-title">{{ obj.title }}</strong>
+            {% if obj.description %}<span class="text-muted">· {{ obj.description }}</span>{% endif %}
+            {% if obj.status == 'draft' %}
+            <span class="badge bg-secondary">{{ obj.proposed_by }}</span>
+            <span class="badge bg-warning text-dark">Draft</span>
+            {% elif obj.status == 'rejected' %}
+            <span class="badge bg-secondary">Rejected</span>
+            {% elif obj.status == 'approved' %}
+            {% if cycle.status == 'brainstorming' %}
+            <span class="badge bg-success">Approved</span>
+            {% else %}
+            <span class="badge bg-success">({{ obj.krs|length }} KR)</span>
+            {% endif %}
+            {% endif %}
+        </div>
+        <div class="d-flex align-items-center gap-2">
+            {% if obj.status == 'approved' %}
+            <div class="progress okr-progress">
+                <div class="progress-bar o-fill" style="width:{{ obj.progress }}%"></div>
+            </div>
+            <span class="badge o-progress">{{ obj.progress }}%</span>
+            {% endif %}
+            {% if obj.status == 'draft' and is_admin and cycle.status == 'brainstorming' %}
+            <form method="POST" action="{{ url_for('okr.objective_approve', obj_id=obj.id) }}"
+                  data-confirm="Approve this draft as formal Objective?">
+                <input type="hidden" name="cycle_key" value="{{ selected_cycle }}">
+                <button class="btn btn-sm btn-outline-success">Approve</button>
+            </form>
+            <form method="POST" action="{{ url_for('okr.objective_reject_draft', obj_id=obj.id) }}"
+                  data-confirm="Reject this draft?">
+                <input type="hidden" name="cycle_key" value="{{ selected_cycle }}">
+                <button class="btn btn-sm btn-outline-secondary">Reject</button>
+            </form>
+            {% endif %}
+        </div>
+    </div>
+    <div class="card-body">
+        {% for kr in obj.krs %}
+        {% set can_progress = cycle.status in ['planning', 'active'] and kr.status in ['active', 'pending_edit'] %}
+        {% set can_edit_planning = cycle.status == 'planning' and kr.status == 'active' and (kr.uid == current_user or is_admin) %}
+        {% set can_edit_active = cycle.status == 'active' and kr.status == 'active' and kr.uid == current_user %}
+        {% set can_edit = can_edit_planning or can_edit_active %}
+        <div class="kr-item {% if kr.status == 'pending_edit' %}pending-edit{% endif %}">
+            <!-- KR title row -->
+            <div class="d-flex justify-content-between align-items-center">
+                <div class="d-flex align-items-center gap-2 flex-grow-1">
+                    {% if is_committed %}<span class="kr-number">KR{{ loop.index }}</span>{% endif %}
+                    <strong>{{ kr.title }}</strong>
+                    {% if is_committed %}<span class="kr-owner">({{ kr.uid }})</span>{% endif %}
+                    {% if kr.status == 'pending_edit' %}<span class="badge bg-warning text-dark">Pending Edit</span>{% endif %}
+                </div>
+                <div class="d-flex align-items-center gap-2">
+                    <div class="progress okr-progress">
+                        <div class="progress-bar kr-fill" style="width:{{ kr.progress }}%"></div>
+                    </div>
+                    <span class="badge kr-progress">{{ kr.progress }}%</span>
+                </div>
+            </div>
+
+            {% if kr.description %}<p class="mb-1 mt-1 text-muted">{{ kr.description }}</p>{% endif %}
+
+            {% if kr.status == 'pending_edit' %}
+            <div class="pending-diff">
+                <div><strong>Pending title:</strong> {{ kr.pending_title }}</div>
+                {% if kr.pending_description %}<div><strong>Pending description:</strong> {{ kr.pending_description }}</div>{% endif %}
+            </div>
+            {% endif %}
+
+            {% if kr.milestones %}
+            <div class="my-2">
+                {% for m in kr.milestones %}
+                <div class="milestone">
+                    <i class="bi bi-flag text-secondary"></i>
+                    <span class="milestone-date">{{ m.created_at[:10] }}</span>
+                    <span>{{ m.description }}</span>
+                </div>
+                {% endfor %}
+            </div>
+            {% endif %}
+
+            <!-- Action buttons (right-aligned, equal width, green/blue/yellow) -->
+            {% if can_progress or can_edit %}
+            <div id="kr-actions-{{ kr.id }}" class="kr-actions mt-2">
+                {% if can_progress %}
+                <button type="button" class="btn btn-outline-success" onclick="showKrAction({{ kr.id }}, 'progress')">
+                    <i class="bi bi-bar-chart"></i> Update progress
+                </button>
+                <button type="button" class="btn btn-outline-primary" onclick="showKrAction({{ kr.id }}, 'milestone')">
+                    <i class="bi bi-flag"></i> Add milestone
+                </button>
+                {% endif %}
+                {% if can_edit %}
+                <button type="button" class="btn btn-outline-warning" onclick="showKrAction({{ kr.id }}, 'edit')">
+                    <i class="bi bi-pencil"></i> Edit KR
+                </button>
+                {% endif %}
+            </div>
+            {% endif %}
+
+            <!-- Hidden form: Update Progress -->
+            {% if can_progress %}
+            <form id="kr-progress-{{ kr.id }}" method="POST" action="{{ url_for('okr.kr_update_progress', kr_id=kr.id) }}" class="submit-form mt-2" style="display:none">
+                <input type="hidden" name="cycle_key" value="{{ selected_cycle }}">
+                <input name="progress" type="number" class="form-control form-control-sm" min="0" max="100" value="{{ kr.progress }}" required>
+                <button class="btn btn-sm btn-outline-success">Update</button>
+                <button type="button" class="btn btn-sm btn-link text-muted" onclick="cancelKrAction({{ kr.id }})">Cancel</button>
+            </form>
+            {% endif %}
+
+            <!-- Hidden form: Add Milestone -->
+            {% if can_progress %}
+            <form id="kr-milestone-{{ kr.id }}" method="POST" action="{{ url_for('okr.kr_add_milestone', kr_id=kr.id) }}" class="submit-form mt-2" style="display:none">
+                <input type="hidden" name="cycle_key" value="{{ selected_cycle }}">
+                <input name="description" class="form-control form-control-sm" placeholder="Milestone description" required>
+                <button class="btn btn-sm btn-outline-primary">Add</button>
+                <button type="button" class="btn btn-sm btn-link text-muted" onclick="cancelKrAction({{ kr.id }})">Cancel</button>
+            </form>
+            {% endif %}
+
+            <!-- Hidden form: Edit -->
+            {% if can_edit %}
+            <form id="kr-edit-{{ kr.id }}" method="POST" action="{{ url_for('okr.kr_edit' if cycle.status == 'planning' else 'okr.kr_request_edit', kr_id=kr.id) }}" class="submit-form mt-2" style="display:none">
+                <input type="hidden" name="cycle_key" value="{{ selected_cycle }}">
+                <input name="title" class="form-control form-control-sm" value="{{ kr.title }}" required>
+                <input name="description" class="form-control form-control-sm" value="{{ kr.description }}" placeholder="Description (optional)">
+                <button class="btn btn-sm btn-outline-warning">{{ 'Save' if cycle.status == 'planning' else 'Submit' }}</button>
+                <button type="button" class="btn btn-sm btn-link text-muted" onclick="cancelKrAction({{ kr.id }})">Cancel</button>
+            </form>
+            {% endif %}
+
+            <!-- Admin review (right-aligned, equal width) -->
+            {% if kr.status == 'pending_edit' and is_admin %}
+            <div class="kr-admin-review">
+                <form method="POST" action="{{ url_for('okr.kr_approve_edit', kr_id=kr.id) }}">
+                    <input type="hidden" name="cycle_key" value="{{ selected_cycle }}">
+                    <button class="btn btn-sm btn-success"><i class="bi bi-check"></i> Approve edit</button>
+                </form>
+                <form method="POST" action="{{ url_for('okr.kr_reject_edit', kr_id=kr.id) }}">
+                    <input type="hidden" name="cycle_key" value="{{ selected_cycle }}">
+                    <button class="btn btn-sm btn-secondary"><i class="bi bi-x"></i> Reject edit</button>
+                </form>
+            </div>
+            {% endif %}
+        </div>
+        {% else %}
+        <p class="text-muted mb-0">No Key Results yet</p>
+        {% endfor %}
+
+        {% if cycle.status == 'planning' and obj.status == 'approved' %}
+        <form method="POST" action="{{ url_for('okr.kr_add') }}" class="submit-form mt-2 pt-2 border-top">
+            <input type="hidden" name="cycle_key" value="{{ selected_cycle }}">
+            <input type="hidden" name="objective_id" value="{{ obj.id }}">
+            <input type="hidden" name="uid" value="{{ current_user }}">
+            <input name="title" class="form-control form-control-sm" placeholder="Key Result title" required>
+            <input name="description" class="form-control form-control-sm" placeholder="Description (optional)">
+            <button class="btn btn-sm btn-outline-success"><i class="bi bi-plus-circle"></i> Add KR</button>
+        </form>
+        {% endif %}
+    </div>
+</div>
+{% endfor %}
+
+{% else %}
+{% if cycle.status == 'planning' %}
+<div class="alert alert-info">No approved Objectives yet. Please create and approve them in brainstorming phase first.</div>
+{% elif cycle.status == 'active' %}
+<div class="alert alert-info">No active Objectives. Please create them in brainstorming phase first.</div>
+{% elif cycle.status == 'closed' %}
+<div class="alert alert-secondary">This cycle is closed, no objective data.</div>
+{% endif %}
+{% endif %}
+
+{% endif %}
+
+<!-- Confirm Modal -->
+<div class="modal fade" id="confirmModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-sm">
+        <div class="modal-content">
+            <div class="modal-body pb-1">
+                <p id="confirmModalMessage" class="mb-0"></p>
+            </div>
+            <div class="modal-footer d-flex justify-content-center gap-3">
+                <button type="button" class="btn btn-outline-secondary px-4" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary px-4" id="confirmModalConfirm">Confirm</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function showKrAction(krId, action) {
+    var actions = document.getElementById('kr-actions-' + krId);
+    if (actions) actions.style.display = 'none';
+    var form = document.getElementById('kr-' + action + '-' + krId);
+    if (form) form.style.display = 'flex';
+}
+function cancelKrAction(krId) {
+    ['progress', 'milestone', 'edit'].forEach(function(action) {
+        var el = document.getElementById('kr-' + action + '-' + krId);
+        if (el) el.style.display = 'none';
+    });
+    var actions = document.getElementById('kr-actions-' + krId);
+    if (actions) actions.style.display = 'flex';
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    var modalEl = document.getElementById('confirmModal');
+    var modal = new bootstrap.Modal(modalEl);
+    document.querySelectorAll('form[data-confirm]').forEach(function(form) {
+        form.addEventListener('submit', function(e) {
+            e.preventDefault();
+            document.getElementById('confirmModalMessage').textContent = this.dataset.confirm;
+            var confirmBtn = document.getElementById('confirmModalConfirm');
+            var newBtn = confirmBtn.cloneNode(true);
+            confirmBtn.parentNode.replaceChild(newBtn, confirmBtn);
+            newBtn.addEventListener('click', function() {
+                modal.hide();
+                form.submit();
+            });
+            modal.show();
+        });
+    });
+});
+</script>
+
+{% endblock %}

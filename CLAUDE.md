@@ -12,9 +12,14 @@ ZGL 组织活跃看板系统，包含 IC 卡签到、团队工作规划/进度�
 # 服务端（Flask dashboard）
 python app.py                    # 启动在 0.0.0.0:5000，数据库表自动创建
 
+# 预发环境（本地测试）
+python app.py pre                # 启动在 0.0.0.0:5101，使用 attendance_pre.db
+
 # 端侧（树莓派刷卡客户端，需 root 权限访问 USB 设备）
 sudo python3 checkin_usb.py
 ```
+
+**本地测试请使用 `python app.py pre`（端口 5101）**，避免影响生产数据。
 
 建议部署为 systemd 服务。
 
@@ -32,6 +37,7 @@ sudo python3 checkin_usb.py
 - **`routes_booking.py`**：Blueprint（url_prefix='/booking'）——预约广场全部路由
 - **`routes_api.py`**：Blueprint（url_prefix='/api'）——签到、每周计划、每日完成 API
 - **`routes_auth.py`**：Blueprint——登录/登出
+- **`routes_okr.py`**：Blueprint（url_prefix='/okr'）——OKR 管理
 - **`checkin_usb.py`**（端侧/树莓派）：通过 `evdev` 读取 USB IC 读卡器输入，刷卡后先写本地 SQLite，再 HTTP POST 同步到服务端（请求头带 `Authorization: Bearer <HMAC-token>`）。本地表有 `synced` 字段追踪同步状态（0=未同步, 1=已同步）。`retry_sync` 每日自动重试7天内未同步记录（`threading.Timer(86400)`）。
 
 **数据同步流：** 读卡器 → 本地 DB 写入 → HTTP POST `/api/checkin`（带 HMAC token） → 服务端 DB 写入
@@ -47,13 +53,18 @@ sudo python3 checkin_usb.py
 
 ## Database
 
-SQLite（`attendance.db`），六张表：
+SQLite（`attendance.db` / `attendance_pre.db`），表：
 - `sign_ins`：签到记录（id, uid, timestamp），端侧额外有 synced 字段
 - `users`：UID-姓名绑定（uid PK, name）
 - `weekly_plans`：每周计划（id, uid, week_key, content, submitted_at），UNIQUE(uid, week_key)
 - `daily_completions`：每日完成情况（id, uid, date, content, submitted_at），UNIQUE(uid, date)
 - `booking_slots`：预约时段（id, publisher, slot_type, title, description, day_of_week, start_hour, end_hour, specific_date, capacity, status, created_at），slot_type 为 'recurring' 或 'one_time'
 - `bookings`：预约记录（id, slot_id, booker, instance_date, status, booked_at），UNIQUE(slot_id, booker, instance_date)
+- `monthly_summaries`：月报缓存（uid, month_key, summary, suggestion, generated_at），UNIQUE(uid, month_key)
+- `okr_cycles`：OKR 周期（id, cycle_key, status, created_by, created_at），status ∈ {brainstorming, active, closed}
+- `okr_objectives`：目标 O（id, cycle_id, title, description, status, proposed_by, created_at），status ∈ {draft, approved}
+- `okr_key_results`：关键结果 KR（id, objective_id, uid, title, description, progress, status, created_at），status ∈ {active, pending_delete, cancelled}
+- `okr_kr_milestones`：里程碑（id, kr_id, description, completed, created_at）
 
 ## Key API Endpoints
 

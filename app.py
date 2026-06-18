@@ -5,6 +5,7 @@ from routes_auth import auth_bp
 from routes_dashboard import dashboard_bp
 from routes_booking import booking_bp
 from routes_api import api_bp
+from routes_okr import okr_bp
 
 app = Flask(__name__)
 app.config.update(flask_config)
@@ -16,6 +17,7 @@ app.register_blueprint(auth_bp)
 app.register_blueprint(dashboard_bp)
 app.register_blueprint(booking_bp)
 app.register_blueprint(api_bp)
+app.register_blueprint(okr_bp)
 
 
 def _weekly_summary_job():
