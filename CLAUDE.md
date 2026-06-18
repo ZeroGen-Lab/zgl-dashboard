@@ -12,9 +12,14 @@ ZGL 组织活跃看板系统，包含 IC 卡签到、团队工作规划/进度�
 # 服务端（Flask dashboard）
 python app.py                    # 启动在 0.0.0.0:5000，数据库表自动创建
 
+# 预发环境（本地测试）
+python app.py pre                # 启动在 0.0.0.0:5101，使用 attendance_pre.db
+
 # 端侧（树莓派刷卡客户端，需 root 权限访问 USB 设备）
 sudo python3 checkin_usb.py
 ```
+
+**本地测试请使用 `python app.py pre`（端口 5101）**，避免影响生产数据。
 
 建议部署为 systemd 服务。
 
@@ -22,16 +27,17 @@ sudo python3 checkin_usb.py
 
 **端侧-服务端分离 + 服务端 Blueprint 模块化架构：**
 
-- **`app.py`**（入口）：创建 Flask app，加载配置，注册 4 个 Blueprint，启动服务；若配置了钉钉 webhook 则启动 APScheduler 周一定时推送周报
+- **`app.py`**（入口）：创建 Flask app，加载配置，注册 5 个 Blueprint，注册 `fmt_time` Jinja 过滤器（浮点小时 → `"HH:MM"`，如 `6.5` → `06:30`，用于 booking 半点时间显示），启动服务；若配置了钉钉 webhook 则启动 APScheduler 周一定时推送周报
 - **`config.py`**：从 `.config.yml` 加载配置，导出模块级全局变量（`DB_PATH`, `API_SECRET`, `ALLOWED_CHECKIN_IPS`, `SECRET_KEY`, `DINGTALK_WEBHOOK_URL`, `DINGTALK_SECRET`）
-- **`db.py`**：数据库连接（`get_db_connection()`）和 6 张表的初始化（`ensure_tables()`）
+- **`db.py`**：数据库连接（`get_db_connection()`）和 11 张表的初始化（`ensure_tables()`）
 - **`auth.py`**：认证基础设施——用户集（`.users.txt`）、HMAC token 生成/验证、装饰器（`login_required`, `token_required`, `checkin_ip_required`）
-- **`helpers.py`**：业务辅助函数（`compute_week_key`, `compute_upcoming_instances`, `compute_summary_week_range`, `generate_weekly_summary`）
+- **`helpers.py`**：业务辅助函数（`compute_week_key`, `compute_upcoming_instances`, `is_instance_expired`, `compute_summary_week_range`, `generate_weekly_summary`）。`is_instance_expired(slot, date)` 判断 booking 实例是否已过结束时间（`now ≥ 当日 + end_hour`），用于实效只读判定
 - **`notifier.py`**：钉钉群机器人消息推送（`send_dingtalk_markdown`），支持 HMAC-SHA256 加签
 - **`routes_dashboard.py`**：Blueprint——首页、绑定、统计、详情、周报摘要
 - **`routes_booking.py`**：Blueprint（url_prefix='/booking'）——预约广场全部路由
 - **`routes_api.py`**：Blueprint（url_prefix='/api'）——签到、每周计划、每日完成 API
 - **`routes_auth.py`**：Blueprint——登录/登出
+- **`routes_okr.py`**：Blueprint（url_prefix='/okr'）——OKR 管理
 - **`checkin_usb.py`**（端侧/树莓派）：通过 `evdev` 读取 USB IC 读卡器输入，刷卡后先写本地 SQLite，再 HTTP POST 同步到服务端（请求头带 `Authorization: Bearer <HMAC-token>`）。本地表有 `synced` 字段追踪同步状态（0=未同步, 1=已同步）。`retry_sync` 每日自动重试7天内未同步记录（`threading.Timer(86400)`）。
 
 **数据同步流：** 读卡器 → 本地 DB 写入 → HTTP POST `/api/checkin`（带 HMAC token） → 服务端 DB 写入
@@ -47,13 +53,18 @@ sudo python3 checkin_usb.py
 
 ## Database
 
-SQLite（`attendance.db`），六张表：
+SQLite（`attendance.db` / `attendance_pre.db`），表：
 - `sign_ins`：签到记录（id, uid, timestamp），端侧额外有 synced 字段
 - `users`：UID-姓名绑定（uid PK, name）
 - `weekly_plans`：每周计划（id, uid, week_key, content, submitted_at），UNIQUE(uid, week_key)
 - `daily_completions`：每日完成情况（id, uid, date, content, submitted_at），UNIQUE(uid, date)
-- `booking_slots`：预约时段（id, publisher, slot_type, title, description, day_of_week, start_hour, end_hour, specific_date, capacity, status, created_at），slot_type 为 'recurring' 或 'one_time'
+- `booking_slots`：预约时段（id, publisher, slot_type, title, description, day_of_week, start_hour, end_hour, specific_date, capacity, status, created_at）。slot_type ∈ {'recurring', 'one_time'}；`start_hour`/`end_hour` 为 **REAL（浮点小时，`6.5`=6:30）**，范围 6.0–22.0、整点与半点可选。旧库的 INTEGER 列靠 SQLite 亲和性也能存浮点，**无需迁移即可工作**（仅 `.schema` 声明仍为 INTEGER，可选地用重建表方式改为 REAL）
 - `bookings`：预约记录（id, slot_id, booker, instance_date, status, booked_at），UNIQUE(slot_id, booker, instance_date)
+- `monthly_summaries`：月报缓存（uid, month_key, summary, suggestion, generated_at），UNIQUE(uid, month_key)
+- `okr_cycles`：OKR 周期（id, cycle_key, status, created_by, created_at），status ∈ {brainstorming, active, closed}
+- `okr_objectives`：目标 O（id, cycle_id, title, description, status, proposed_by, created_at），status ∈ {draft, approved}
+- `okr_key_results`：关键结果 KR（id, objective_id, uid, title, description, progress, status, created_at），status ∈ {active, pending_delete, cancelled}
+- `okr_kr_milestones`：里程碑（id, kr_id, description, completed, created_at）
 
 ## Key API Endpoints
 
@@ -66,9 +77,10 @@ SQLite（`attendance.db`），六张表：
 | `/stats` | GET | login | 考勤统计（15/60/180天+上月）+ 柱状图 + 热力图 |
 | `/detail/<uid>` | GET | login | 单人日历详情（4周视图，支持 ?offset=N 翻页） |
 | `/weekly_summary` | GET | login | 周报摘要（出勤天数 + 日报数 + 周计划提交状态，支持 ?offset=N 翻页） |
-| `/booking` | GET | login | 预约广场主页 |
-| `/booking/publish` | GET/POST | login | 发布新预约时段 |
-| `/booking/book/<slot_id>/<instance_date>` | POST | login | 预约某个时段实例 |
+| `/booking/` | GET | login | 预约广场主页（失效活动仍可见但只读，昨日及更早的从广场卡片隐藏） |
+| `/booking/publish` | GET/POST | login | 发布新预约时段（时间 6:00–22:00，整点+半点） |
+| `/booking/edit/<slot_id>` | GET/POST | login | 编辑已发布时段（除类型外：标题/说明/起止时间/容量/日期或星期几；已失效的一次性活动不可编辑） |
+| `/booking/book/<slot_id>/<instance_date>` | POST | login | 预约某个时段实例（已结束的实例会被拒绝） |
 | `/booking/cancel/<booking_id>` | POST | login | 取消我的预约 |
 | `/booking/cancel_slot/<slot_id>` | POST | login | 取消我发布的时段 |
 | `/api/checkin` | POST | token + IP白名单 | JSON `{"uid", "timestamp"}` 签到同步接口 |
@@ -82,8 +94,8 @@ SQLite（`attendance.db`），六张表：
 - `templates/index.html` — 首页（最近刷卡 + 铅笔编辑绑定 + 一次性预约轮播）
 - `templates/stats.html` — 统计页（表格 + 柱状图 + 56天热力图）
 - `templates/detail.html` — 日历详情页（4周视图 + 计划/完成 + 近30条刷卡明细）
-- `templates/booking.html` — 预约广场主页（一次性/长期卡片 + 我的预约/发布）
-- `templates/booking_publish.html` — 发布预约时段表单
+- `templates/booking.html` — 预约广场主页（一次性/长期卡片 + 我的预约/发布；失效实例显示「已结束」只读、发布者可编辑）
+- `templates/booking_publish.html` — 发布/编辑预约时段表单（双用，经 `fmt_time` 渲染 6:00–22:00 半点时间下拉）
 - `templates/weekly_summary.html` — 周报摘要页（出勤/日报/周计划表格 + 翻页）
 
 ## Configuration

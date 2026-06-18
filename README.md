@@ -98,7 +98,7 @@ SQLite（`attendance.db`），首次启动自动创建：
 | users | UID-姓名绑定（uid, name） |
 | weekly_plans | 每周计划（uid, week_key, content） |
 | daily_completions | 每日完成情况（uid, date, content） |
-| booking_slots | 预约时段（publisher, slot_type, title, start/end_hour, capacity） |
+| booking_slots | 预约时段（publisher, slot_type, title, start/end_hour, capacity）。start/end_hour 为浮点小时（`6.5`=6:30），范围 6:00–22:00、整点与半点可选 |
 | bookings | 预约记录（slot_id, booker, instance_date） |
 
 ## Web 页面
@@ -108,7 +108,7 @@ SQLite（`attendance.db`），首次启动自动创建：
 | 首页 | 最近刷卡记录 + UID/姓名绑定 + 一次性预约轮播 |
 | 统计 | 考勤统计 + 柱状图 + 56天热力图 |
 | 详情 | 单人日历视图（4周） + 计划/完成 |
-| 预约广场 | 发布/浏览/预约空闲时段（长期 + 一次性） |
+| 预约广场 | 发布/浏览/预约/编辑空闲时段（长期 + 一次性；活动过了结束时间仍可见但只读，昨日及更早的从广场隐藏） |
 
 ## API
 
@@ -117,9 +117,10 @@ SQLite（`attendance.db`），首次启动自动创建：
 | `/api/checkin` | POST | token + IP白名单 | 签到同步 |
 | `/api/weekly_plan` | POST | token | 每周计划（周六至周一中午12点） |
 | `/api/daily_completion` | POST | token | 每日完成情况 |
-| `/booking` | GET | login | 预约广场主页 |
-| `/booking/publish` | GET/POST | login | 发布新预约时段 |
-| `/booking/book/<id>/<date>` | POST | login | 预约某个时段实例 |
+| `/booking/` | GET | login | 预约广场主页 |
+| `/booking/publish` | GET/POST | login | 发布新预约时段（时间 6:00–22:00，整点+半点） |
+| `/booking/edit/<id>` | GET/POST | login | 编辑已发布时段（除类型外字段可改） |
+| `/booking/book/<id>/<date>` | POST | login | 预约某个时段实例（已结束的实例会被拒绝） |
 | `/booking/cancel/<id>` | POST | login | 取消预约 |
 | `/booking/cancel_slot/<id>` | POST | login | 取消已发布的时段 |
 

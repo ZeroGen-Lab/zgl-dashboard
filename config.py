@@ -33,7 +33,7 @@ SECRET_KEY = _effective['secret_key']
 DINGTALK_WEBHOOK_URL = _effective.get('dingtalk_webhook_url', '')
 DINGTALK_SECRET = _effective.get('dingtalk_secret', '')
 DEEPSEEK_API_KEY = _effective.get('deepseek_api_key', '')
-DEEPSEEK_BASE_URL = _effective.get('deepseek_base_url', 'https://api.deepseek.com/v1')
+DEEPSEEK_BASE_URL = _effective.get('deepseek_base_url', 'https://api.deepseek.com')
 
 flask_config = {
     'DB_PATH': DB_PATH,

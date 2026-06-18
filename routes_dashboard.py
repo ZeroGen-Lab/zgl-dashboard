@@ -2,7 +2,7 @@ from flask import Blueprint, render_template, request, redirect, url_for, flash
 from datetime import datetime, timedelta
 from db import get_db_connection
 from auth import login_required
-from helpers import compute_summary_week_range, generate_weekly_summary, compute_month_range, generate_monthly_summary
+from helpers import compute_summary_week_range, generate_weekly_summary, compute_month_range, generate_monthly_summary, is_instance_expired
 
 dashboard_bp = Blueprint('dashboard', __name__)
 
@@ -38,6 +38,9 @@ def index():
     ).fetchall()
     carousel_data = []
     for slot in carousel_slots:
+        # 跳过已过结束时间的一次性活动，首页只推尚未结束的
+        if is_instance_expired(slot, slot['specific_date']):
+            continue
         booked_count = conn.execute(
             "SELECT COUNT(*) FROM bookings WHERE slot_id=? AND instance_date=? AND status='active'",
             (slot['id'], slot['specific_date'])

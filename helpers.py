@@ -20,6 +20,16 @@ def compute_week_key(dt):
         return None
 
 
+def is_instance_expired(slot, instance_date):
+    """活动实例是否已过结束时间：now >= instance_date(YYYY-MM-DD) + end_hour
+
+    end_hour 为浮点（支持半点，如 6.5=6:30）。半点也可被 timedelta(hours=...) 直接接受。
+    """
+    base = datetime.strptime(instance_date, '%Y-%m-%d')
+    end_dt = base + timedelta(hours=slot['end_hour'])
+    return datetime.now() >= end_dt
+
+
 def compute_upcoming_instances(slot, n=4):
     """根据 slot 类型计算接下来 n 个可用实例日期"""
     today = datetime.now().date()

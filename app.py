@@ -5,6 +5,7 @@ from routes_auth import auth_bp
 from routes_dashboard import dashboard_bp
 from routes_booking import booking_bp
 from routes_api import api_bp
+from routes_okr import okr_bp
 
 app = Flask(__name__)
 app.config.update(flask_config)
@@ -16,6 +17,20 @@ app.register_blueprint(auth_bp)
 app.register_blueprint(dashboard_bp)
 app.register_blueprint(booking_bp)
 app.register_blueprint(api_bp)
+app.register_blueprint(okr_bp)
+
+
+@app.template_filter('fmt_time')
+def fmt_time(h):
+    """浮点小时 -> 'HH:MM'，如 6.5 -> '06:30'，20 -> '20:00'"""
+    if h is None:
+        return ''
+    hh = int(h)
+    mm = int(round((h - hh) * 60))
+    if mm == 60:
+        hh += 1
+        mm = 0
+    return f"{hh:02d}:{mm:02d}"
 
 
 def _weekly_summary_job():
