@@ -20,6 +20,19 @@ app.register_blueprint(api_bp)
 app.register_blueprint(okr_bp)
 
 
+@app.template_filter('fmt_time')
+def fmt_time(h):
+    """浮点小时 -> 'HH:MM'，如 6.5 -> '06:30'，20 -> '20:00'"""
+    if h is None:
+        return ''
+    hh = int(h)
+    mm = int(round((h - hh) * 60))
+    if mm == 60:
+        hh += 1
+        mm = 0
+    return f"{hh:02d}:{mm:02d}"
+
+
 def _weekly_summary_job():
     """周一 12:30 自动推送周报到钉钉群"""
     from helpers import compute_summary_week_range, generate_weekly_summary

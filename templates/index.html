@@ -13,7 +13,7 @@
         <div class="carousel-item {% if loop.index0 == 0 %}active{% endif %}">
             <div class="card p-4 text-center" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border-radius: 15px; min-height: 120px;">
                 <h5><i class="bi bi-calendar-event"></i> {{ item.slot.title }}</h5>
-                <p class="mb-1">{{ item.slot.specific_date }} {{ "%02d:00" | format(item.slot.start_hour) }}-{{ "%02d:00" | format(item.slot.end_hour) }}</p>
+                <p class="mb-1">{{ item.slot.specific_date }} {{ item.slot.start_hour | fmt_time }}-{{ item.slot.end_hour | fmt_time }}</p>
                 <p class="mb-2"><i class="bi bi-person"></i> {{ item.slot.publisher }}
                 {% if item.slot.description %}<span class="small ms-2">{{ item.slot.description }}</span>{% endif %}</p>
                 <span class="badge bg-light text-dark">

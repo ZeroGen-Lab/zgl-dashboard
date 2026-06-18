@@ -2,9 +2,35 @@ from flask import Blueprint, render_template, request, redirect, url_for, sessio
 from datetime import datetime, timedelta
 from db import get_db_connection
 from auth import login_required
-from helpers import compute_upcoming_instances
+from helpers import compute_upcoming_instances, is_instance_expired
 
 booking_bp = Blueprint('booking', __name__, url_prefix='/booking')
+
+# 可选时段：6:00–22:00，整点与半点（步长 0.5）
+TIME_OPTIONS = [6.0 + 0.5 * i for i in range(33)]  # 6.0 .. 22.0
+
+
+def _default_form():
+    today = datetime.now().strftime('%Y-%m-%d')
+    return {
+        'slot_type': 'recurring',
+        'day_of_week': 0,
+        'specific_date': today,
+        'title': '',
+        'description': '',
+        'start_hour': 20.0,
+        'end_hour': 21.0,
+        'capacity': 1,
+    }
+
+
+def _validate_time(start_hour, end_hour):
+    """校验起止时间在 6:00–22:00 且 end > start，返回错误信息或 None"""
+    if not (6.0 <= start_hour <= 22.0 and 6.0 <= end_hour <= 22.0):
+        return '时间范围须在 6:00–22:00 之间'
+    if end_hour <= start_hour:
+        return '结束时间必须大于开始时间'
+    return None
 
 
 @booking_bp.route('/')
@@ -39,8 +65,12 @@ def booking():
                 'remaining': slot['capacity'] - booked_count,
                 'user_booked': user_booking is not None,
                 'user_booking_id': user_booking['id'] if user_booking else None,
-                'bookers': [b['booker'] for b in bookers]
+                'bookers': [b['booker'] for b in bookers],
+                'expired': is_instance_expired(slot, inst_date)
             })
+        # one_time 已过期（specific_date < 今天）不产生实例，从广场隐藏
+        if not instance_data:
+            continue
         display_slots.append({
             'slot': dict(slot),
             'instances': instance_data
@@ -54,10 +84,16 @@ def booking():
         (current_user,)
     ).fetchall()
 
-    my_slots = conn.execute(
+    my_slot_rows = conn.execute(
         "SELECT * FROM booking_slots WHERE publisher=? AND status='active' ORDER BY created_at DESC",
         (current_user,)
     ).fetchall()
+    my_slots = []
+    for s in my_slot_rows:
+        d = dict(s)
+        d['expired'] = (d['slot_type'] == 'one_time' and d['specific_date']
+                        and is_instance_expired(d, d['specific_date']))
+        my_slots.append(d)
 
     conn.close()
 
@@ -77,20 +113,22 @@ def booking():
 @booking_bp.route('/publish', methods=['GET', 'POST'])
 @login_required
 def booking_publish():
+    today = datetime.now().strftime('%Y-%m-%d')
     if request.method == 'POST':
         current_user = session['user']
         slot_type = request.form.get('slot_type')
         title = request.form.get('title', '').strip()
         description = request.form.get('description', '').strip()
-        start_hour = int(request.form.get('start_hour'))
-        end_hour = int(request.form.get('end_hour'))
+        start_hour = float(request.form.get('start_hour'))
+        end_hour = float(request.form.get('end_hour'))
         capacity = int(request.form.get('capacity', 1))
 
         if not title or len(title) > 50:
             flash('标题不能为空且不超过50字')
             return redirect(url_for('booking.booking_publish'))
-        if end_hour <= start_hour:
-            flash('结束时间必须大于开始时间')
+        err = _validate_time(start_hour, end_hour)
+        if err:
+            flash(err)
             return redirect(url_for('booking.booking_publish'))
 
         conn = get_db_connection()
@@ -115,8 +153,8 @@ def booking_publish():
                 flash('请选择具体日期')
                 conn.close()
                 return redirect(url_for('booking.booking_publish'))
-            if specific_date < datetime.now().strftime('%Y-%m-%d'):
-                flash('一次性预约日期必须是未来日期')
+            if specific_date < today:
+                flash('一次性预约日期必须是今天或未来日期')
                 conn.close()
                 return redirect(url_for('booking.booking_publish'))
             conn.execute(
@@ -129,7 +167,95 @@ def booking_publish():
         flash('时段发布成功!')
         return redirect(url_for('booking.booking'))
 
-    return render_template('booking_publish.html', page='booking')
+    return render_template('booking_publish.html', page='booking', editing=False,
+                           form=_default_form(), time_options=TIME_OPTIONS, today=today)
+
+
+@booking_bp.route('/edit/<int:slot_id>', methods=['GET', 'POST'])
+@login_required
+def booking_edit(slot_id):
+    current_user = session['user']
+    today = datetime.now().strftime('%Y-%m-%d')
+    conn = get_db_connection()
+    slot = conn.execute(
+        "SELECT * FROM booking_slots WHERE id=? AND publisher=? AND status='active'",
+        (slot_id, current_user)
+    ).fetchone()
+    if not slot:
+        flash('无法编辑该时段')
+        conn.close()
+        return redirect(url_for('booking.booking'))
+    # 一次性活动已过结束时间则不可编辑
+    if slot['slot_type'] == 'one_time' and slot['specific_date'] and is_instance_expired(slot, slot['specific_date']):
+        flash('该活动已结束，无法编辑')
+        conn.close()
+        return redirect(url_for('booking.booking'))
+
+    if request.method == 'POST':
+        title = request.form.get('title', '').strip()
+        description = request.form.get('description', '').strip()
+        start_hour = float(request.form.get('start_hour'))
+        end_hour = float(request.form.get('end_hour'))
+        capacity = int(request.form.get('capacity', 1))
+
+        if not title or len(title) > 50:
+            flash('标题不能为空且不超过50字')
+            conn.close()
+            return redirect(url_for('booking.booking_edit', slot_id=slot_id))
+        err = _validate_time(start_hour, end_hour)
+        if err:
+            flash(err)
+            conn.close()
+            return redirect(url_for('booking.booking_edit', slot_id=slot_id))
+
+        if slot['slot_type'] == 'recurring':
+            day_of_week = int(request.form.get('day_of_week'))
+            existing = conn.execute(
+                "SELECT id FROM booking_slots WHERE publisher=? AND slot_type='recurring' "
+                "AND day_of_week=? AND start_hour=? AND status='active' AND id!=?",
+                (current_user, day_of_week, start_hour, slot_id)
+            ).fetchone()
+            if existing:
+                flash('你已经发布了一个相同时间的长期预约时段')
+                conn.close()
+                return redirect(url_for('booking.booking_edit', slot_id=slot_id))
+            conn.execute(
+                "UPDATE booking_slots SET title=?, description=?, day_of_week=?, start_hour=?, end_hour=?, capacity=? WHERE id=?",
+                (title, description, day_of_week, start_hour, end_hour, capacity, slot_id)
+            )
+        else:  # one_time
+            specific_date = request.form.get('specific_date')
+            if not specific_date:
+                flash('请选择具体日期')
+                conn.close()
+                return redirect(url_for('booking.booking_edit', slot_id=slot_id))
+            if specific_date < today:
+                flash('一次性预约日期必须是今天或未来日期')
+                conn.close()
+                return redirect(url_for('booking.booking_edit', slot_id=slot_id))
+            conn.execute(
+                "UPDATE booking_slots SET title=?, description=?, specific_date=?, start_hour=?, end_hour=?, capacity=? WHERE id=?",
+                (title, description, specific_date, start_hour, end_hour, capacity, slot_id)
+            )
+
+        conn.commit()
+        conn.close()
+        flash('时段已更新!')
+        return redirect(url_for('booking.booking'))
+
+    form = {
+        'slot_type': slot['slot_type'],
+        'day_of_week': slot['day_of_week'] or 0,
+        'specific_date': slot['specific_date'] or today,
+        'title': slot['title'],
+        'description': slot['description'] or '',
+        'start_hour': slot['start_hour'],
+        'end_hour': slot['end_hour'],
+        'capacity': slot['capacity'],
+    }
+    conn.close()
+    return render_template('booking_publish.html', page='booking', editing=True, slot=slot,
+                           form=form, time_options=TIME_OPTIONS, today=today)
 
 
 @booking_bp.route('/book/<int:slot_id>/<instance_date>', methods=['POST'])
@@ -154,6 +280,11 @@ def booking_book(slot_id, instance_date):
     instances = compute_upcoming_instances(slot)
     if instance_date not in instances:
         flash('该日期不在可预约范围内')
+        conn.close()
+        return redirect(url_for('booking.booking'))
+
+    if is_instance_expired(slot, instance_date):
+        flash('该时段已结束')
         conn.close()
         return redirect(url_for('booking.booking'))
 

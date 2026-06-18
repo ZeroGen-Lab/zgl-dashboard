@@ -94,7 +94,7 @@
           data-confirm="Go to {{ next_status[cycle.status] }} phase?">
         <input type="hidden" name="cycle_key" value="{{ selected_cycle }}">
         <input type="hidden" name="status" value="{{ next_status[cycle.status] }}">
-        <button class="btn btn-sm btn-outline-dark">Go to {{ next_status[cycle.status]|capitalize }}</button>
+        <button class="btn btn-sm btn-outline-dark">Go to <strong>{{ next_status[cycle.status]|capitalize }}</strong></button>
     </form>
     {% endif %}
     {% endif %}
