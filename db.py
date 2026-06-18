@@ -13,8 +13,10 @@ def ensure_tables():
     conn = get_db_connection()
     conn.execute('''CREATE TABLE IF NOT EXISTS sign_ins
                     (id INTEGER PRIMARY KEY AUTOINCREMENT, uid TEXT, timestamp DATETIME)''')
+    # loginname：登录用户名（来自 .users.txt），与 IC 卡 uid 1:1 绑定；
+    # SQLite 的 UNIQUE 把 NULL 视为互异，故允许多个 NULL（未绑定的卡），非 NULL 登录名唯一
     conn.execute('''CREATE TABLE IF NOT EXISTS users
-                    (uid TEXT PRIMARY KEY, name TEXT)''')
+                    (uid TEXT PRIMARY KEY, name TEXT, loginname TEXT UNIQUE)''')
     conn.execute('''CREATE TABLE IF NOT EXISTS weekly_plans
                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
                      uid TEXT NOT NULL,
@@ -90,5 +92,6 @@ def ensure_tables():
                      kr_id INTEGER NOT NULL REFERENCES okr_key_results(id),
                      description TEXT NOT NULL,
                      created_at DATETIME DEFAULT CURRENT_TIMESTAMP)''')
+
     conn.commit()
     conn.close()

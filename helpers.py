@@ -2,6 +2,14 @@ from datetime import datetime, timedelta
 from db import get_db_connection
 
 
+def uid_for_user(loginname):
+    """登录用户名 -> 绑定的 IC 卡 uid；未绑定返回 None。"""
+    conn = get_db_connection()
+    row = conn.execute("SELECT uid FROM users WHERE loginname=?", (loginname,)).fetchone()
+    conn.close()
+    return row['uid'] if row else None
+
+
 def compute_week_key(dt):
     """
     计算提交归属的 ISO week key。

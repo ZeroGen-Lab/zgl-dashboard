@@ -1,4 +1,9 @@
 {% extends "base.html" %}
+{% block extra_style %}
+<style>
+    .member-badge { font-size: 0.90rem; font-weight: 500; }
+</style>
+{% endblock %}
 {% block content %}
 {% if carousel_data %}
 <div id="bookingCarousel" class="carousel slide mb-4" data-bs-ride="carousel" data-bs-interval="4000">
@@ -40,28 +45,27 @@
 <div class="card p-4">
     <h4 class="mb-4">团队成员</h4>
     <table class="table table-hover align-middle">
-        <thead class="table-light"><tr><th>UID</th><th>姓名</th><th>最后签到</th><th>绑定/更新</th></tr></thead>
+        <thead class="table-light">
+            <tr><th>UID</th><th>姓名</th><th>最后签到</th><th>绑定/更新</th></tr>
+        </thead>
         <tbody>
             {% for r in records %}
             <tr>
                 <td><a href="/detail/{{r.uid}}" class="text-decoration-none fw-bold">{{r.uid}}</a></td>
-                <td><span class="badge {% if r.name %}bg-success{% else %}bg-secondary{% endif %}">{{r.name or '未绑定'}}</span></td>
+                <td>
+                    {% if r.loginname %}
+                    <span class="badge bg-success member-badge">{{ r.name }} ({{ r.loginname }})</span>
+                    {% else %}
+                    <span class="badge bg-secondary member-badge">未绑定</span>
+                    {% endif %}
+                </td>
                 <td>{{r.last_time}}</td>
                 <td>
-                    <form action="/bind" method="POST" class="d-flex align-items-center">
-                        <input type="hidden" name="uid" value="{{r.uid}}">
-                        <div class="d-flex align-items-center flex-grow-1 me-2">
-                            <input type="text" name="name" id="name-{{r.uid}}" class="form-control form-control-sm"
-                                   placeholder="输入姓名" required
-                                   {% if r.name %}disabled value="{{r.name}}"{% endif %}>
-                            {% if r.name %}
-                            <i class="bi bi-pencil-square ms-2 text-primary edit-pencil"
-                               style="cursor:pointer; font-size:1.2rem;"
-                               onclick="enableEdit('{{r.uid}}')"></i>
-                            {% endif %}
-                        </div>
-                        <button type="submit" class="btn btn-primary btn-sm">保存</button>
-                    </form>
+                    <button type="button" class="btn btn-sm btn-outline-secondary open-bind"
+                            data-uid="{{ r.uid }}" data-loginname="{{ r.loginname or '' }}" data-name="{{ r.name or '' }}">
+                        <i class="bi {% if r.loginname %}bi-pencil{% else %}bi-plus-circle{% endif %}"></i>
+                        {% if r.loginname %}更新{% else %}绑定{% endif %}
+                    </button>
                 </td>
             </tr>
             {% endfor %}
@@ -69,15 +73,66 @@
     </table>
 </div>
 
+<!-- 绑定/更新弹窗：登录名 + 姓名 一次确定 -->
+<div class="modal fade" id="bindModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <form id="bindForm" method="POST" action="/bind">
+                <div class="modal-header">
+                    <h6 class="modal-title"><i class="bi bi-person-badge"></i> 绑定 / 更新卡片</h6>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" name="uid" id="bindUid">
+                    <div class="mb-3">
+                        <label class="form-label">登录名 <span class="text-danger">*</span></label>
+                        <select name="loginname" id="bindLoginname" class="form-select" required>
+                            <option value="" disabled selected>选择登录名</option>
+                            {% for ln in available_loginnames %}
+                            <option value="{{ln}}">{{ln}}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="mb-1">
+                        <label class="form-label">姓名 <span class="text-danger">*</span></label>
+                        <input type="text" name="name" id="bindName" class="form-control" placeholder="姓名" required>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="submit" class="btn btn-primary">确定</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
 <script>
-function enableEdit(uid) {
-    var input = document.getElementById('name-' + uid);
-    input.disabled = false;
-    input.focus();
-    input.select();
-    // Hide the pencil icon
-    var pencil = input.parentElement.querySelector('.edit-pencil');
-    if (pencil) pencil.style.display = 'none';
+var _bindModal;
+document.addEventListener('DOMContentLoaded', function() {
+    _bindModal = new bootstrap.Modal(document.getElementById('bindModal'));
+    document.querySelectorAll('button.open-bind').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            openBind(this.dataset.uid, this.dataset.loginname, this.dataset.name);
+        });
+    });
+});
+
+function openBind(uid, loginname, name) {
+    document.getElementById('bindUid').value = uid;
+    document.getElementById('bindName').value = name || '';
+    var sel = document.getElementById('bindLoginname');
+    // 清掉上次注入的"当前登录名"选项
+    var prev = sel.querySelector('option[data-cur="1"]'); if (prev) prev.remove();
+    var cur = (loginname || '').trim();
+    if (cur && !sel.querySelector('option[value="' + cur + '"]')) {
+        // 当前登录名已绑定（不在可选列表里），补一个选项以便显示/保留
+        var opt = document.createElement('option');
+        opt.value = cur; opt.textContent = cur + ' (当前)'; opt.setAttribute('data-cur', '1');
+        sel.appendChild(opt);
+    }
+    sel.value = cur;  // cur 为空则选中占位项
+    _bindModal.show();
 }
 </script>
 {% endblock %}

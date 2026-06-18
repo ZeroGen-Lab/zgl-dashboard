@@ -1,8 +1,9 @@
+import sqlite3
 from flask import Blueprint, render_template, request, redirect, url_for, flash
 from datetime import datetime, timedelta
 from db import get_db_connection
-from auth import login_required
-from helpers import compute_summary_week_range, generate_weekly_summary, compute_month_range, generate_monthly_summary, is_instance_expired
+from auth import login_required, VALID_USERS
+from helpers import compute_month_range, generate_monthly_summary, is_instance_expired
 
 dashboard_bp = Blueprint('dashboard', __name__)
 
@@ -21,7 +22,7 @@ def index():
     conn.commit()
 
     sql = '''
-        SELECT s.uid, MAX(s.timestamp) as last_time, u.name
+        SELECT s.uid, MAX(s.timestamp) as last_time, u.name, u.loginname
         FROM sign_ins s
         LEFT JOIN users u ON s.uid = u.uid
         WHERE s.timestamp >= date('now','-180 days')
@@ -29,6 +30,11 @@ def index():
         ORDER BY last_time DESC
     '''
     records = conn.execute(sql).fetchall()
+
+    # 可选登录名 = .users.txt(VALID_USERS) 中尚未绑定到任何卡片的（保证 1:1）
+    bound_loginnames = {row['loginname'] for row in conn.execute(
+        "SELECT loginname FROM users WHERE loginname IS NOT NULL").fetchall()}
+    available_loginnames = sorted(VALID_USERS - bound_loginnames)
 
     # 一次性预约轮播数据
     today_str = datetime.now().strftime('%Y-%m-%d')
@@ -48,18 +54,55 @@ def index():
         carousel_data.append(dict(slot=dict(slot), remaining=slot['capacity'] - booked_count))
 
     conn.close()
-    return render_template('index.html', page='index', records=records, carousel_data=carousel_data)
+    return render_template('index.html', page='index', records=records,
+                           carousel_data=carousel_data,
+                           available_loginnames=available_loginnames)
 
 
 @dashboard_bp.route('/bind', methods=['POST'])
 @login_required
 def bind():
-    uid = request.form.get('uid')
-    name = request.form.get('name')
+    """绑定/更新一张卡：必须同时指定 loginname（未绑定的）和姓名。"""
+    uid = (request.form.get('uid') or '').strip()
+    name = (request.form.get('name') or '').strip()
+    loginname = (request.form.get('loginname') or '').strip()
+
+    if not uid:
+        flash('缺少卡片 UID。')
+        return redirect(url_for('dashboard.index'))
+    if not loginname:
+        flash('请选择登录名。')
+        return redirect(url_for('dashboard.index'))
+    if not name:
+        flash('请输入姓名。')
+        return redirect(url_for('dashboard.index'))
+    if loginname not in VALID_USERS:
+        flash('未知登录名，请从下拉列表选择。')
+        return redirect(url_for('dashboard.index'))
+
     conn = get_db_connection()
-    conn.execute("INSERT OR REPLACE INTO users (uid, name) VALUES (?, ?)", (uid, name))
-    conn.commit()
-    conn.close()
+    # 1:1：loginname 不能已绑到别的 uid（UNIQUE 约束兜底，这里给友好提示）
+    owner = conn.execute("SELECT uid FROM users WHERE loginname=?", (loginname,)).fetchone()
+    if owner and owner['uid'] != uid:
+        flash(f'登录名 {loginname} 已绑定到其他卡片，请换一个。')
+        conn.close()
+        return redirect(url_for('dashboard.index'))
+
+    try:
+        row = conn.execute("SELECT uid FROM users WHERE uid=?", (uid,)).fetchone()
+        if row:
+            conn.execute("UPDATE users SET name=?, loginname=? WHERE uid=?",
+                         (name, loginname, uid))
+        else:
+            conn.execute("INSERT INTO users (uid, name, loginname) VALUES (?, ?, ?)",
+                         (uid, name, loginname))
+        conn.commit()
+        flash('绑定成功。')
+    except sqlite3.IntegrityError:
+        # 并发或被抢先绑定导致 loginname 唯一冲突
+        flash('绑定失败：该登录名可能已被他人抢先绑定。')
+    finally:
+        conn.close()
     return redirect(url_for('dashboard.index'))
 
 
@@ -223,20 +266,6 @@ def detail(uid):
                            date_range=date_range,
                            prev_offset=prev_offset, next_offset=next_offset,
                            recent_checkins=recent_checkins)
-
-
-@dashboard_bp.route('/weekly_summary')
-@login_required
-def weekly_summary():
-    offset = request.args.get('offset', 0, type=int)
-    if offset < 0:
-        offset = 0
-    summary_monday, summary_sunday, _, _ = compute_summary_week_range(offset)
-    date_range = f"{summary_monday.strftime('%Y-%m-%d')} ~ {summary_sunday.strftime('%Y-%m-%d')}"
-    summary_list = generate_weekly_summary(offset)
-    return render_template('weekly_summary.html', page='weekly_summary',
-                           summary_list=summary_list, date_range=date_range,
-                           offset=offset)
 
 
 @dashboard_bp.route('/monthly_summary')
