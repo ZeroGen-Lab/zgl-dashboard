@@ -178,9 +178,10 @@
     </div>
     <div class="card-body">
         {% for kr in obj.krs %}
-        {% set can_progress = cycle.status in ['planning', 'active'] and kr.status in ['active', 'pending_edit'] %}
-        {% set can_edit_planning = cycle.status == 'planning' and kr.status == 'active' and (kr.uid == current_user or is_admin) %}
-        {% set can_edit_active = cycle.status == 'active' and kr.status == 'active' and kr.uid == current_user %}
+        {% set is_owner = kr.uid == current_user %}
+        {% set can_progress = is_owner and cycle.status == 'active' and kr.status in ['active', 'pending_edit'] %}
+        {% set can_edit_planning = is_owner and cycle.status == 'planning' and kr.status == 'active' %}
+        {% set can_edit_active = is_owner and cycle.status == 'active' and kr.status == 'active' %}
         {% set can_edit = can_edit_planning or can_edit_active %}
         <div class="kr-item {% if kr.status == 'pending_edit' %}pending-edit{% endif %}">
             <!-- KR title row -->

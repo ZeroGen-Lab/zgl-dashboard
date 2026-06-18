@@ -287,7 +287,7 @@ def kr_add():
 def kr_update_progress(kr_id):
     """
     Update the progress of a key result. Allowed in planning and active phases.
-    Progress must be an integer between 0 and 100.
+    Only the KR owner can update progress. Progress must be an integer 0-100.
     """
     progress = request.form.get('progress', type=int)
     cycle_key = request.form.get('cycle_key', '').strip()
@@ -295,6 +295,17 @@ def kr_update_progress(kr_id):
         flash('Progress value must be between 0 and 100.')
         return redirect(url_for('okr.okr_page', cycle=cycle_key))
     conn = get_db_connection()
+    kr = conn.execute(
+        "SELECT uid FROM okr_key_results WHERE id=?", (kr_id,)
+    ).fetchone()
+    if not kr:
+        flash('Key result does not exist.')
+        conn.close()
+        return redirect(url_for('okr.okr_page', cycle=cycle_key))
+    if kr['uid'] != session['user']:
+        flash('You can only update progress for key results you are responsible for.')
+        conn.close()
+        return redirect(url_for('okr.okr_page', cycle=cycle_key))
     conn.execute(
         "UPDATE okr_key_results SET progress=? WHERE id=? AND status IN ('active','pending_edit')",
         (progress, kr_id)
@@ -333,7 +344,7 @@ def kr_edit(kr_id):
         flash('Free edit is only allowed in planning phase. Use Request Edit in active phase.')
         conn.close()
         return redirect(url_for('okr.okr_page', cycle=cycle_key))
-    if kr['uid'] != session['user'] and not is_admin():
+    if kr['uid'] != session['user']:
         flash('You can only edit key results you are responsible for.')
         conn.close()
         return redirect(url_for('okr.okr_page', cycle=cycle_key))
@@ -351,7 +362,8 @@ def kr_edit(kr_id):
 @login_required
 def kr_add_milestone(kr_id):
     """
-    Add a milestone to a key result. Milestone description cannot be empty.
+    Add a milestone to a key result. Only the KR owner can add milestones.
+    Milestone description cannot be empty.
     """
     description = request.form.get('description', '').strip()
     cycle_key = request.form.get('cycle_key', '').strip()
@@ -359,6 +371,17 @@ def kr_add_milestone(kr_id):
         flash('Milestone description cannot be empty.')
         return redirect(url_for('okr.okr_page', cycle=cycle_key))
     conn = get_db_connection()
+    kr = conn.execute(
+        "SELECT uid FROM okr_key_results WHERE id=?", (kr_id,)
+    ).fetchone()
+    if not kr:
+        flash('Key result does not exist.')
+        conn.close()
+        return redirect(url_for('okr.okr_page', cycle=cycle_key))
+    if kr['uid'] != session['user']:
+        flash('You can only add milestones to key results you are responsible for.')
+        conn.close()
+        return redirect(url_for('okr.okr_page', cycle=cycle_key))
     conn.execute(
         "INSERT INTO okr_kr_milestones (kr_id, description) VALUES (?, ?)",
         (kr_id, description)
