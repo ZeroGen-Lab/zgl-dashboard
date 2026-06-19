@@ -11,12 +11,14 @@ def get_db_connection():
 def ensure_tables():
     """确保所有必要的表存在，启动时调用"""
     conn = get_db_connection()
+
     conn.execute('''CREATE TABLE IF NOT EXISTS sign_ins
                     (id INTEGER PRIMARY KEY AUTOINCREMENT, uid TEXT, timestamp DATETIME)''')
     # loginname：登录用户名（来自 .users.txt），与 IC 卡 uid 1:1 绑定；
     # SQLite 的 UNIQUE 把 NULL 视为互异，故允许多个 NULL（未绑定的卡），非 NULL 登录名唯一
     conn.execute('''CREATE TABLE IF NOT EXISTS users
                     (uid TEXT PRIMARY KEY, name TEXT, loginname TEXT UNIQUE)''')
+    
     conn.execute('''CREATE TABLE IF NOT EXISTS weekly_plans
                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
                      uid TEXT NOT NULL,
@@ -24,13 +26,31 @@ def ensure_tables():
                      content TEXT NOT NULL,
                      submitted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                      UNIQUE(uid, week_key))''')
+    # weekly plan 的 TODO 列表（itemized）；status 供后续 daily completion 标记完成（done）
+    conn.execute('''CREATE TABLE IF NOT EXISTS weekly_plan_items
+                    (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                     uid TEXT NOT NULL,
+                     week_key TEXT NOT NULL,
+                     item_order INTEGER NOT NULL,
+                     text TEXT NOT NULL,
+                     status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open','done')),
+                     completed_date TEXT,
+                     completed_at DATETIME,
+                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP)''')
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_wpi_uid_week "
+                 "ON weekly_plan_items(uid, week_key)")
+    
+    # review：上一工作周期总结（必填）；todo：下一工作周期计划（可选）
+    # 旧库的 content 列已通过迁移脚本改为 review（旧值即 review），todo 回填为 NULL
     conn.execute('''CREATE TABLE IF NOT EXISTS daily_completions
                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
                      uid TEXT NOT NULL,
                      date TEXT NOT NULL,
-                     content TEXT NOT NULL,
+                     review TEXT NOT NULL,
+                     todo TEXT,
                      submitted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                      UNIQUE(uid, date))''')
+    
     conn.execute('''CREATE TABLE IF NOT EXISTS booking_slots
                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
                      publisher TEXT NOT NULL,
@@ -52,6 +72,7 @@ def ensure_tables():
                      status TEXT DEFAULT 'active' CHECK(status IN ('active', 'cancelled')),
                      booked_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                      UNIQUE(slot_id, booker, instance_date))''')
+    
     conn.execute('''CREATE TABLE IF NOT EXISTS monthly_summaries
                     (uid TEXT NOT NULL,
                      month_key TEXT NOT NULL,
@@ -59,6 +80,7 @@ def ensure_tables():
                      suggestion TEXT,
                      generated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                      UNIQUE(uid, month_key))''')
+   
     conn.execute('''CREATE TABLE IF NOT EXISTS okr_cycles
                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
                      cycle_key TEXT NOT NULL UNIQUE,

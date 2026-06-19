@@ -34,7 +34,7 @@ def fmt_time(h):
 
 
 def _weekly_summary_job():
-    """周一 12:30 自动推送周报到钉钉群"""
+    """周一 18:30 自动推送周报到钉钉群"""
     from helpers import compute_summary_week_range, generate_weekly_summary
     from notifier import send_dingtalk_markdown
     summary_monday, summary_sunday, _, _ = compute_summary_week_range(0)
@@ -51,7 +51,7 @@ def _weekly_summary_job():
 if DINGTALK_WEBHOOK_URL:
     from apscheduler.schedulers.background import BackgroundScheduler
     _scheduler = BackgroundScheduler()
-    _scheduler.add_job(_weekly_summary_job, 'cron', day_of_week='mon', hour=12, minute=30)
+    _scheduler.add_job(_weekly_summary_job, 'cron', day_of_week='mon', hour=18, minute=30)
     _scheduler.start()
 
 if __name__ == '__main__':

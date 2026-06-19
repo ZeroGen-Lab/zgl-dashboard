@@ -14,7 +14,7 @@ def compute_week_key(dt):
     """
     计算提交归属的 ISO week key。
     周六/周日 -> 归属下周
-    周一上午(<=12点) -> 归属当周
+    周一(<=18点) -> 归属当周
     其他时间 -> 拒绝（返回 None）
     """
     weekday = dt.weekday()  # 0=Mon, 5=Sat, 6=Sun
@@ -22,10 +22,113 @@ def compute_week_key(dt):
     if weekday == 5 or weekday == 6:  # 周六、周日 -> 下周
         next_mon = dt + timedelta(days=(7 - weekday))
         return next_mon.strftime('%Y%W')
-    elif weekday == 0 and hour <= 12:  # 周一上午 -> 当周
+    elif weekday == 0 and hour <= 18:  # 周一(<=18点) -> 当周
         return dt.strftime('%Y%W')
     else:
         return None
+
+
+def save_weekly_plan(uid, week_key, items):
+    """保存一周计划：清洗+校验后，单事务 upsert 父行(weekly_plans)并全量替换 items。
+
+    - items: 字符串列表；去首尾空白后丢弃空串。
+    - 限制：≤5 条、每条 ≤20 字，超出抛 ValueError（由调用方捕获并给出友好提示）。
+    - 父行 content 存 join 后的文本，供 monthly summary 的 LLM 文本构建沿用。
+    """
+    cleaned = [s.strip() for s in items if isinstance(s, str) and s.strip()]
+    if len(cleaned) > 5:
+        raise ValueError("每周计划条目不能超过 5 条")
+    for s in cleaned:
+        if len(s) > 20:
+            raise ValueError("每条计划不能超过 20 字")
+    conn = get_db_connection()
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO weekly_plans (uid, week_key, content) VALUES (?, ?, ?)",
+            (uid, week_key, "\n".join(cleaned)))
+        conn.execute(
+            "DELETE FROM weekly_plan_items WHERE uid=? AND week_key=?",
+            (uid, week_key))
+        for order, text in enumerate(cleaned):
+            conn.execute(
+                "INSERT INTO weekly_plan_items (uid, week_key, item_order, text) VALUES (?, ?, ?, ?)",
+                (uid, week_key, order, text))
+        conn.commit()
+    finally:
+        conn.close()
+    return len(cleaned)
+
+
+def current_completion_date():
+    """日报归属日：now-6h（凌晨 0–6 点归到前一天），与签到/日报的 6 小时工作日一致。"""
+    return (datetime.now() - timedelta(hours=6)).strftime('%Y-%m-%d')
+
+
+def save_daily_completion(uid, review, todo):
+    """保存当天日报（review 必填，todo 选填）；多次编辑只保留最新（INSERT OR REPLACE）。
+
+    - review 去首尾空白后不能为空；review/todo 各 ≤100 字，超出抛 ValueError（由调用方给出友好提示）。
+    - 归属日期 = current_completion_date()（now-6h），API 与 Web 共用，保证“可编辑格”与“落库日”一致。
+    - 返回归属日期字符串。
+    """
+    review = (review or '').strip()
+    todo = (todo or '').strip()
+    if not review:
+        raise ValueError("review 不能为空")
+    if len(review) > 100:
+        raise ValueError("review 不能超过100字")
+    if len(todo) > 100:
+        raise ValueError("todo 不能超过100字")
+    date = current_completion_date()
+    conn = get_db_connection()
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO daily_completions (uid, date, review, todo) VALUES (?, ?, ?, ?)",
+            (uid, date, review, todo or None))
+        conn.commit()
+    finally:
+        conn.close()
+    # 异步：基于本次 review 让 AI 判定本周 weekly plan item 的完成情况（best-effort，不阻塞保存）
+    import threading
+    threading.Thread(
+        target=_auto_complete_weekly_plan_items,
+        args=(uid, review, date),
+        daemon=True
+    ).start()
+    return date
+
+
+def _auto_complete_weekly_plan_items(uid, review, date_str):
+    """后台线程：用 review 让 AI 判定本周 open 的 weekly plan item 是否完成，命中则置 done。
+
+    - week_key 取 date_str 所在周的周一 %Y%W（与 detail 页 this_key 一致）。
+    - 单调：只把 status='open' 的项更新为 'done'（AND status='open' 保证幂等/并发安全）。
+    - 整体 best-effort：任何异常都吞掉，绝不影响已提交的 daily save。
+    """
+    try:
+        d = datetime.strptime(date_str, '%Y-%m-%d').date()
+        monday = d - timedelta(days=d.weekday())
+        week_key = monday.strftime('%Y%W')
+        conn = get_db_connection()
+        try:
+            rows = conn.execute(
+                "SELECT id, text FROM weekly_plan_items WHERE uid=? AND week_key=? AND status='open'",
+                (uid, week_key)).fetchall()
+            if not rows:
+                return
+            from llm import judge_completed_plan_items
+            items = [{'id': r['id'], 'text': r['text']} for r in rows]
+            done_ids = judge_completed_plan_items(review, items)
+            for item_id in done_ids:
+                conn.execute(
+                    "UPDATE weekly_plan_items SET status='done', completed_date=?, completed_at=CURRENT_TIMESTAMP "
+                    "WHERE id=? AND status='open'",
+                    (date_str, item_id))
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception:
+        pass
 
 
 def is_instance_expired(slot, instance_date):
@@ -166,13 +269,16 @@ def generate_monthly_summary(month_offset=0):
     comp_map = {r['uid']: r['cnt'] for r in comp_rows}
 
     comp_text_rows = conn.execute(
-        "SELECT uid, date, content FROM daily_completions "
+        "SELECT uid, date, review, todo FROM daily_completions "
         "WHERE date >= ? AND date < ? ORDER BY date",
         (start_str, end_str)
     ).fetchall()
     comp_text_by_uid = {}
     for r in comp_text_rows:
-        comp_text_by_uid.setdefault(r['uid'], []).append(f"{r['date']}: {r['content']}")
+        line = f"{r['date']}: 回顾:{r['review']}"
+        if r['todo']:
+            line += f" 计划:{r['todo']}"
+        comp_text_by_uid.setdefault(r['uid'], []).append(line)
 
     # Weekly plan count + text
     wk_placeholders = ','.join(['?'] * len(week_keys)) if week_keys else "'__none__'"

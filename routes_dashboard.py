@@ -1,9 +1,9 @@
 import sqlite3
-from flask import Blueprint, render_template, request, redirect, url_for, flash
+from flask import Blueprint, render_template, request, redirect, url_for, flash, session
 from datetime import datetime, timedelta
 from db import get_db_connection
 from auth import login_required, VALID_USERS
-from helpers import compute_month_range, generate_monthly_summary, is_instance_expired
+from helpers import compute_month_range, generate_monthly_summary, is_instance_expired, compute_week_key, save_weekly_plan, save_daily_completion, current_completion_date, uid_for_user
 
 dashboard_bp = Blueprint('dashboard', __name__)
 
@@ -188,84 +188,134 @@ def stats():
 @dashboard_bp.route('/detail/<uid>')
 @login_required
 def detail(uid):
-    offset = request.args.get('offset', 0, type=int)
-
+    """三周上下文：上周(完成情况) / 本周(计划+日报+AI) / 下周(待生效计划)。"""
     conn = get_db_connection()
     user = conn.execute("SELECT name FROM users WHERE uid=?", (uid,)).fetchone()
     name = user['name'] if user else "未绑定"
 
-    # 计算当前周的周一
-    today = datetime.now().date()
+    now = datetime.now()
+    today = now.date()
     current_monday = today - timedelta(days=today.weekday())
-    # 当前天固定在第3行（w=2），所以视图起始从当前周的2周前开始
-    view_monday = current_monday + timedelta(weeks=offset) - timedelta(weeks=2)
-    view_end = view_monday + timedelta(weeks=4)
+    last_mon = current_monday - timedelta(weeks=1)
+    next_mon = current_monday + timedelta(weeks=1)
+    last_key, this_key, next_key = (last_mon.strftime('%Y%W'),
+                                    current_monday.strftime('%Y%W'),
+                                    next_mon.strftime('%Y%W'))
 
-    date_range = f"{view_monday.strftime('%Y-%m-%d')} ~ {(view_end - timedelta(days=1)).strftime('%Y-%m-%d')}"
+    def rng(m):
+        return f"{m.strftime('%Y-%m-%d')} ~ {(m + timedelta(days=6)).strftime('%Y-%m-%d')}"
 
-    # 查询签到数据
-    sign_rows = conn.execute(
-        "SELECT DISTINCT date(timestamp) as day FROM sign_ins WHERE uid=? AND timestamp >= ? AND timestamp < ?",
-        (uid, view_monday.strftime('%Y-%m-%d'), view_end.strftime('%Y-%m-%d'))
-    ).fetchall()
-    sign_days = set(r['day'] for r in sign_rows)
+    # 三周的 items + 旧 content 回退（各一次查询）
+    items_by_key = {}
+    for r in conn.execute(
+        "SELECT week_key, item_order, text, status FROM weekly_plan_items "
+        "WHERE uid=? AND week_key IN (?, ?, ?) ORDER BY week_key, item_order",
+        (uid, last_key, this_key, next_key)
+    ).fetchall():
+        items_by_key.setdefault(r['week_key'], []).append({'text': r['text'], 'status': r['status']})
+    legacy_by_key = {r['week_key']: r['content'] for r in conn.execute(
+        "SELECT week_key, content FROM weekly_plans WHERE uid=? AND week_key IN (?, ?, ?)",
+        (uid, last_key, this_key, next_key)).fetchall()}
 
-    # 查询每日完成数据
-    comp_rows = conn.execute(
-        "SELECT date, content FROM daily_completions WHERE uid=? AND date >= ? AND date < ?",
-        (uid, view_monday.strftime('%Y-%m-%d'), view_end.strftime('%Y-%m-%d'))
-    ).fetchall()
-    comp_map = {r['date']: r['content'] for r in comp_rows}
+    def build(m, key):
+        it = items_by_key.get(key, [])
+        if not it and legacy_by_key.get(key):
+            # 旧 content（无 items）：按 '\n' 拆成条目，默认未完成 open
+            it = [{'text': line, 'status': 'open'}
+                  for line in legacy_by_key[key].split('\n') if line.strip()]
+        return {'date_range': rng(m), 'plan_items': it, 'can_edit': False}
 
-    # 查询每周计划数据
-    plan_rows = conn.execute(
-        "SELECT week_key, content FROM weekly_plans WHERE uid=?",
-        (uid,)
-    ).fetchall()
-    plan_map = {r['week_key']: r['content'] for r in plan_rows}
+    last_week = build(last_mon, last_key)
+    next_week = build(next_mon, next_key)
+    this_week = build(current_monday, this_key)
 
-    # 构建 4 周数据
-    weeks = []
-    for w in range(4):
-        week_monday = view_monday + timedelta(weeks=w)
-        week_key = week_monday.strftime('%Y%W')
-        days = []
+    # 本周签到 / 日报 -> 7 天格子（也用于上周的只读展示）
+    is_owner = (uid == uid_for_user(session['user']))
+    editable_date_str = current_completion_date()
+    weekdays = ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
+
+    def build_days(monday, editable):
+        ws = monday.strftime('%Y-%m-%d')
+        we = (monday + timedelta(weeks=1)).strftime('%Y-%m-%d')
+        sign = set(r['day'] for r in conn.execute(
+            "SELECT DISTINCT date(timestamp) as day FROM sign_ins WHERE uid=? AND timestamp >= ? AND timestamp < ?",
+            (uid, ws, we)).fetchall())
+        comp = {r['date']: {'review': r['review'], 'todo': r['todo']} for r in conn.execute(
+            "SELECT date, review, todo FROM daily_completions WHERE uid=? AND date >= ? AND date < ?",
+            (uid, ws, we)).fetchall()}
+        out = []
         for d in range(7):
-            day_date = week_monday + timedelta(days=d)
-            day_str = day_date.strftime('%Y-%m-%d')
-            day_short = day_date.strftime('%m/%d')
-            is_present = day_str in sign_days
-            is_future = day_date > today
-            completion = comp_map.get(day_str, None)
-            days.append({
-                'date_str': day_short,
-                'full_date': day_str,
-                'present': is_present,
-                'future': is_future,
-                'completion': completion
-            })
-        weeks.append({
-            'days': days,
-            'plan': plan_map.get(week_key, None)
-        })
+            dd = monday + timedelta(days=d)
+            ds = dd.strftime('%Y-%m-%d')
+            c = comp.get(ds)
+            out.append({'weekday': weekdays[d], 'date_str': dd.strftime('%m/%d'), 'full_date': ds,
+                        'present': ds in sign, 'future': dd > today,
+                        'review': c['review'] if c else None, 'todo': c['todo'] if c else None,
+                        'can_edit': bool(is_owner and editable and ds == editable)})
+        return out
 
-    # 查询最近30条刷卡明细（在关闭连接之前）
-    recent_checkins = conn.execute(
-        "SELECT timestamp FROM sign_ins WHERE uid=? ORDER BY timestamp DESC LIMIT 30",
-        (uid,)
-    ).fetchall()
-    recent_checkins = [r['timestamp'] for r in recent_checkins]
+    this_week['days'] = build_days(current_monday, editable_date_str)
+    last_week['days'] = build_days(last_mon, None)
 
-    prev_offset = offset - 4
-    next_offset = offset + 4
+    editable_week_key = compute_week_key(now)
+    this_week['can_edit'] = bool(is_owner and editable_week_key and this_key == editable_week_key)
+    next_week['can_edit'] = bool(is_owner and editable_week_key and next_key == editable_week_key)
+
+    recent_checkins = [r['timestamp'] for r in conn.execute(
+        "SELECT timestamp FROM sign_ins WHERE uid=? ORDER BY timestamp DESC LIMIT 30", (uid,)).fetchall()]
 
     conn.close()
-
     return render_template('detail.html', page='detail',
-                           uid=uid, name=name, weeks=weeks,
-                           date_range=date_range,
-                           prev_offset=prev_offset, next_offset=next_offset,
+                           uid=uid, name=name, is_owner=is_owner,
+                           last_week=last_week, this_week=this_week, next_week=next_week,
+                           in_window=editable_week_key is not None,
                            recent_checkins=recent_checkins)
+
+
+@dashboard_bp.route('/weekly_plan', methods=['POST'])
+@login_required
+def weekly_plan_save():
+    """Web 保存一周计划：仅 owner、仅提交窗口内（保存到可提交那周）。"""
+    uid = (request.form.get('uid') or '').strip()
+    items = request.form.getlist('item')
+
+    if not uid or uid != uid_for_user(session['user']):
+        flash('只能编辑自己的周计划。')
+        return redirect(url_for('dashboard.detail', uid=uid))
+
+    editable_week_key = compute_week_key(datetime.now())
+    if not editable_week_key:
+        flash('当前不在提交窗口内（周六至周一18点）。')
+        return redirect(url_for('dashboard.detail', uid=uid))
+
+    try:
+        save_weekly_plan(uid, editable_week_key, items)
+    except ValueError as e:
+        flash(str(e))
+    else:
+        flash('周计划已保存。')
+    return redirect(url_for('dashboard.detail', uid=uid))
+
+
+@dashboard_bp.route('/daily_completion', methods=['POST'])
+@login_required
+def daily_completion_save():
+    """Web 编辑当天日报：仅 owner、仅当天（now-6h 归属日），多次编辑只保留最新。"""
+    uid = (request.form.get('uid') or '').strip()
+    review = request.form.get('review') or ''
+    todo = request.form.get('todo') or ''
+
+    if not uid or uid != uid_for_user(session['user']):
+        flash('只能编辑自己的daily completion。')
+        return redirect(url_for('dashboard.detail', uid=uid))
+
+    try:
+        save_daily_completion(uid, review, todo)
+    except ValueError as e:
+        flash(str(e))
+    else:
+        flash('Daily completion已保存。')
+    return redirect(url_for('dashboard.detail', uid=uid))
 
 
 @dashboard_bp.route('/monthly_summary')
