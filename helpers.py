@@ -32,15 +32,15 @@ def save_weekly_plan(uid, week_key, items):
     """保存一周计划：清洗+校验后，单事务 upsert 父行(weekly_plans)并全量替换 items。
 
     - items: 字符串列表；去首尾空白后丢弃空串。
-    - 限制：≤5 条、每条 ≤20 字，超出抛 ValueError（由调用方捕获并给出友好提示）。
+    - 限制：≤5 条、每条 ≤30 字，超出抛 ValueError（由调用方捕获并给出友好提示）。
     - 父行 content 存 join 后的文本，供 monthly summary 的 LLM 文本构建沿用。
     """
     cleaned = [s.strip() for s in items if isinstance(s, str) and s.strip()]
     if len(cleaned) > 5:
         raise ValueError("每周计划条目不能超过 5 条")
     for s in cleaned:
-        if len(s) > 20:
-            raise ValueError("每条计划不能超过 20 字")
+        if len(s) > 30:
+            raise ValueError("每条计划不能超过 30 字")
     conn = get_db_connection()
     try:
         conn.execute(

@@ -7,9 +7,9 @@
        ============================================================ */
     .day-list { display: flex; flex-direction: column; gap: 6px; }                              /* 7 天行的纵向容器（上周/本周日报） */
     .day-list-head { display: flex; gap: 8px; padding: 0 8px; font-size: 0.92rem; margin-bottom: 2px; }  /* 日报表头行 */
-    .day-list-head .col-title { flex: 1 1 0; font-weight: bold; text-align: center; padding: 3px 0; opacity: .7; }  /* 表头列标题（Review/Todo） */
+    .day-list-head .col-title { flex: 1 1 0; font-weight: bold; text-align: center; padding: 3px 0; }  /* 表头列标题（Review/Todo） */
     .day-list-head .col-title.weekday { flex: 0 0 100px; }                                     /* 表头左侧 Weekday 列宽 */
-    .cal-day-row { display: flex; align-items: stretch; gap: 8px; border-radius: 6px; padding: 6px 8px; border: 1px solid #e9ecef; font-size: 0.92rem; }  /* 单日行：日期格 + Review + Todo */
+    .cal-day-row { display: flex; align-items: stretch; gap: 24px; border-radius: 6px; padding: 6px 8px; border: 1px solid #e9ecef; font-size: 0.92rem; }  /* 单日行：日期格 + Review + Todo；gap = 各列间距 */
     .cal-day-row .day-label { flex: 0 0 100px; font-weight: bold; line-height: 1.3; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; }  /* 左侧 星期/日期（+ 编辑铅笔） */
     .cal-day-row .field-block { flex: 1 1 0; border-radius: 6px; padding: 6px 8px; min-height: 40px; }  /* Review / Todo 单元格容器 */
     .cal-day-row .field-text { white-space: pre-wrap; }                                        /* 单元格正文，保留换行 */
@@ -57,7 +57,7 @@
     /* ============================================================
        其他：周计划编辑表单元素（计划卡标题 / 计划条目行 / 只读列表）
        ============================================================ */
-    .week-plan-card .section-label { font-weight: bold; color: #0d6efd; }                      /* 计划卡标题「计划」 */
+    .week-plan-card .section-label { font-weight: bold; color: #000000; }                      /* 计划卡标题「计划」 */
     .plan-item-row { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }       /* 单条计划行（上移/下移/输入/删除） */
     .plan-item-row input[type=text] { flex: 1 1 auto; }                                        /* 计划文本输入框 */
     .plan-item-row .btn { flex: 0 0 auto; }                                                    /* 计划行内按钮 */
@@ -73,7 +73,7 @@
     <form method="POST" action="{{ url_for('dashboard.weekly_plan_save') }}" id="planForm">
         <input type="hidden" name="uid" value="{{ uid }}">
         <div class="d-flex justify-content-between align-items-center mb-2">
-            <span class="section-label">计划 <small class="text-muted fw-normal">（提交窗口：周六 00:00 – 周一 18:00；≤5 条，每条 ≤20 字）</small></span>
+            <span class="section-label">计划 <small class="text-muted fw-normal">（提交窗口：周六 00:00 ~ 周一 18:00；不超过5条，每条不超过30字符）</small></span>
             <button type="button" class="btn btn-outline-primary dc-toggle wp-toggle" onclick="toggleWpEdit(this)" title="编辑">
                 <i class="bi bi-pencil"></i>
             </button>
@@ -82,10 +82,10 @@
         <div class="wp-view">
             {% if week.plan_items %}
             <ul class="plan-readonly">
-                {% for it in week.plan_items %}<li>{% if it.status == 'done' %}✅{% else %}[ ]{% endif %} {{ it.text }}</li>{% endfor %}
+                {% for it in week.plan_items %}<li>{% if it.status == 'done' %}✅{% else %}[  ]{% endif %} {{ it.text }}</li>{% endfor %}
             </ul>
             {% else %}
-            <div class="text-muted mt-1">暂无计划</div>
+            <div class="text-muted mt-1">NA</div>
             {% endif %}
         </div>
         {# 编辑态：默认隐藏 #}
@@ -98,7 +98,7 @@
                 <div class="plan-item-row">
                     <button type="button" class="btn btn-sm btn-outline-secondary py-0" onclick="moveItem(this,-1)" title="上移"><i class="bi bi-arrow-up-short"></i></button>
                     <button type="button" class="btn btn-sm btn-outline-secondary py-0" onclick="moveItem(this,1)" title="下移"><i class="bi bi-arrow-down-short"></i></button>
-                    <input type="text" name="item" class="form-control form-control-sm" value="{{ it.text }}" maxlength="20" placeholder="计划条目">
+                    <input type="text" name="item" class="form-control form-control-sm" value="{{ it.text }}" maxlength="30" placeholder="计划条目">
                     <button type="button" class="btn btn-sm btn-outline-danger py-0" onclick="this.parentElement.remove()" title="删除"><i class="bi bi-x-lg"></i></button>
                 </div>
                 {% endfor %}
@@ -106,12 +106,13 @@
         </div>
     </form>
     {% else %}
+    <div class="mb-2"><span class="section-label">计划</span></div>
     {% if week.plan_items %}
     <ul class="plan-readonly">
         {% for it in week.plan_items %}<li>{% if it.status == 'done' %}[✅]{% else %}[  ]{% endif %} {{ it.text }}</li>{% endfor %}
     </ul>
     {% else %}
-    <div class="text-muted mt-1">暂无计划</div>
+    <div class="text-muted mt-1">NA</div>
     {% endif %}
     {% endif %}
 </div>
@@ -170,14 +171,14 @@
 
     {# —— 上周：完成情况 —— #} 
     <div class="week-band last">
-        <div class="fw-bold text-muted mb-1">上周 · 计划回顾 &nbsp;&nbsp; <small class="fw-normal">{{ last_week.date_range }}</small></div>
+        <div class="fw-bold text-muted mb-1">上周 · 工作回顾 &nbsp;&nbsp; <small class="fw-normal">{{ last_week.date_range }}</small></div>
         {{ plan_area(last_week, last_week.can_edit) }}
         {% if last_week.plan_items %}
         {% set _done = last_week.plan_items | selectattr('status', 'equalto', 'done') | list %}
         <div class="small text-muted mt-1">完成 {{ _done | length }}/{{ last_week.plan_items | length }}</div>
         {% endif %}
         {{ day_list(last_week.days) }}
-        <div class="mt-2 p-2 bg-light rounded text-muted small"><i class="bi bi-robot"></i> AI 评论 · 开发中</div>
+        <div class="mt-2 p-2 bg-light rounded text-muted small"><i class="bi bi-robot"></i> AI 总结 · 开发中</div>
     </div>
 
     {# —— 本周：计划 + 日报 + AI —— #}
@@ -185,7 +186,7 @@
         <div class="fw-bold text-primary mb-1">本周 · 推进详情 &nbsp;&nbsp; <small class="text-muted fw-normal">{{ this_week.date_range }}</small>{% if this_week.can_edit %} <span class="badge bg-primary">可编辑</span>{% endif %}</div>
         {{ plan_area(this_week, this_week.can_edit) }}
         {{ day_list(this_week.days) }}
-        <div class="mt-2 p-2 bg-light rounded text-muted small"><i class="bi bi-robot"></i> AI 评论 · 开发中</div>
+        <div class="mt-2 p-2 bg-light rounded text-muted small"><i class="bi bi-robot"></i> AI 总结 · 开发中</div>
     </div>
 
     {# —— 下周：待生效计划 —— #}
@@ -209,7 +210,7 @@ function addItem() {
     row.innerHTML =
         '<button type="button" class="btn btn-sm btn-outline-secondary py-0" onclick="moveItem(this,-1)" title="上移"><i class="bi bi-arrow-up-short"></i></button>' +
         '<button type="button" class="btn btn-sm btn-outline-secondary py-0" onclick="moveItem(this,1)" title="下移"><i class="bi bi-arrow-down-short"></i></button>' +
-        '<input type="text" name="item" class="form-control form-control-sm" maxlength="20" placeholder="计划条目">' +
+        '<input type="text" name="item" class="form-control form-control-sm" maxlength="30" placeholder="计划条目">' +
         '<button type="button" class="btn btn-sm btn-outline-danger py-0" onclick="this.parentElement.remove()" title="删除"><i class="bi bi-x-lg"></i></button>';
     var box = document.getElementById('planItems');
     if (box) box.appendChild(row);
