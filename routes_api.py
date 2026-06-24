@@ -2,7 +2,7 @@ from flask import Blueprint, request, jsonify
 from datetime import datetime, timedelta
 from db import get_db_connection
 from auth import token_required, checkin_ip_required
-from helpers import compute_week_key
+from helpers import compute_week_key, save_weekly_plan, save_daily_completion
 
 api_bp = Blueprint('api', __name__, url_prefix='/api')
 
@@ -29,24 +29,29 @@ def checkin():
 @token_required
 def weekly_plan():
     data = request.get_json()
-    if not data or 'uid' not in data or 'content' not in data:
-        return jsonify({'success': False, 'message': '缺少 uid 或 content 参数'}), 400
+    if not data or 'uid' not in data:
+        return jsonify({'success': False, 'message': '缺少 uid 参数'}), 400
 
     uid = data['uid']
-    content = data['content']
-    if len(content) > 200:
-        return jsonify({'success': False, 'message': '每周计划内容不能超过200字'}), 400
-    now = datetime.now()
+    # 新格式：items 列表；旧格式：单个 content -> 按'\n' split的列表（向后兼容）
+    if 'items' in data:
+        items = data['items']
+        if not isinstance(items, list):
+            return jsonify({'success': False, 'message': 'items 必须是列表'}), 400
+    elif 'content' in data:
+        items = data['content'].split('\n')
+    else:
+        return jsonify({'success': False, 'message': '缺少 items 或 content 参数'}), 400
 
-    week_key = compute_week_key(now)
+    week_key = compute_week_key(datetime.now())
     if week_key is None:
-        return jsonify({'success': False, 'message': '当前不在提交时间窗口内（周六至周一中午12点）'}), 400
+        return jsonify({'success': False, 'message': '当前不在提交时间窗口内（周六至周一18点）'}), 400
 
-    conn = get_db_connection()
-    conn.execute("INSERT OR REPLACE INTO weekly_plans (uid, week_key, content) VALUES (?, ?, ?)",
-                 (uid, week_key, content))
-    conn.commit()
-    conn.close()
+    try:
+        save_weekly_plan(uid, week_key, items)
+    except ValueError as e:
+        return jsonify({'success': False, 'message': str(e)}), 400
+
     return jsonify({'success': True, 'message': '每周计划已提交', 'uid': uid, 'week_key': week_key})
 
 
@@ -54,19 +59,22 @@ def weekly_plan():
 @token_required
 def daily_completion():
     data = request.get_json()
-    if not data or 'uid' not in data or 'content' not in data:
-        return jsonify({'success': False, 'message': '缺少 uid 或 content 参数'}), 400
+    if not data or 'uid' not in data:
+        return jsonify({'success': False, 'message': '缺少 uid 参数'}), 400
 
     uid = data['uid']
-    content = data['content']
-    if len(content) > 100:
-        return jsonify({'success': False, 'message': '每日完成情况内容不能超过100字'}), 400
-    six_hour_ago = datetime.now() - timedelta(hours=6)
-    date = six_hour_ago.strftime('%Y-%m-%d')
+    # review 必填；兼容老版本 content（当作 review）
+    if 'review' in data:
+        review = data['review'] or ''
+    elif 'content' in data:
+        review = data['content'] or ''
+    else:
+        return jsonify({'success': False, 'message': '缺少 review 参数'}), 400
+    todo = data.get('todo') or ''
 
-    conn = get_db_connection()
-    conn.execute("INSERT OR REPLACE INTO daily_completions (uid, date, content) VALUES (?, ?, ?)",
-                 (uid, date, content))
-    conn.commit()
-    conn.close()
+    try:
+        date = save_daily_completion(uid, review, todo)
+    except ValueError as e:
+        return jsonify({'success': False, 'message': str(e)}), 400
+
     return jsonify({'success': True, 'message': '每日完成情况已提交', 'uid': uid, 'date': date})

@@ -79,3 +79,33 @@ def generate_work_suggestion(uid, name, completions_text, plans_text):
         conn.commit()
         conn.close()
     return result
+
+
+def judge_completed_plan_items(review, items):
+    """根据 review 判断 items(本周开放项) 中哪些已被完成，返回判定完成的 id 列表。
+
+    - items: [{'id': int, 'text': str}, ...]，仅含 status='open' 的项。
+    - 保守判定：仅当回顾清楚地表明该计划项已完成时才返回其 id。
+    - 调用 deepseek-v4-pro，强制只输出 JSON {"done_ids":[id,...]}；解析失败/无 key/报错一律返回 []。
+    """
+    if not review or not items:
+        return []
+    import json
+    import re
+    system = (
+        "你是一个工作完成情况判定助手。给定今天的工作回顾(review)和若干本周计划项(每项含 id 和 text)，"
+        "判断哪些计划项已被该回顾明显完成。判定要保守：仅当回顾清楚地表明该计划项已完成时才标记为完成。"
+        "只输出 JSON，不要任何额外文字或解释，格式：{\"done_ids\":[id,...]}；若没有则输出 {\"done_ids\":[]}。"
+    )
+    user = (f"今日工作回顾：\n{review}\n\n本周待判定的计划项：\n"
+            f"{json.dumps(items, ensure_ascii=False)}")
+    text = call_deepseek(system, user, model=ADVANCED_MODEL)
+    if not text:
+        return []
+    try:
+        m = re.search(r'\{.*\}', text, re.S)
+        obj = json.loads(m.group(0)) if m else {}
+        valid = {it['id'] for it in items}
+        return [int(i) for i in obj.get('done_ids', []) if int(i) in valid]
+    except Exception:
+        return []

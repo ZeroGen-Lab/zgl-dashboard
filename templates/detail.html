@@ -1,83 +1,250 @@
 {% extends "base.html" %}
 {% block extra_style %}
 <style>
-    .cal-grid {
-        display: grid;
-        grid-template-columns: repeat(7, 1fr);
-        gap: 4px;
-    }
-    .cal-day {
-        border-radius: 6px;
-        padding: 6px 4px;
-        min-height: 120px;
-        font-size: 0.8rem;
-        position: relative;
-    }
-    .cal-day .day-num { font-weight: bold; }
-    .cal-day .completion-text { font-size: 0.7rem; color: #6c757d; margin-top: 2px; }
-    .cal-header { font-weight: bold; text-align: center; padding: 4px; }
-    .cal-header.weekday { background-color: #e3f2fd; color: #1565c0; }
-    .cal-header.weekend { background-color: #fff9c4; color: #f57f17; }
-    .cal-day.present { background-color: #b8d9c5; border: 1px solid #4caf50; }
-    .cal-day.absent { background-color: #f5f5f5; border: 1px solid #e0e0e0; }
-    .cal-day.future { background-color: #fff; border: 1px solid #e9ecef; color: #adb5bd; }
-    .week-plan { background: #e7f3ff; border: 1px solid #0d6efd; border-radius: 6px; padding: 8px; margin-top: 2px; font-size: 0.85rem; }
-    .week-plan-label { font-weight: bold; color: #0d6efd; margin-right: 4px; }
+    /* ============================================================
+       整体：日报表格布局 / 共用结构 / 行状态(past · future) / 编辑切换
+       （配色与各周主题无关的共用规则；主题色在下面 last/this/next 分组）
+       ============================================================ */
+    .day-list { display: flex; flex-direction: column; gap: 6px; }                              /* 7 天行的纵向容器（上周/本周日报） */
+    .day-list-head { display: flex; gap: 8px; padding: 0 8px; font-size: 0.92rem; margin-bottom: 2px; }  /* 日报表头行 */
+    .day-list-head .col-title { flex: 1 1 0; font-weight: bold; text-align: center; padding: 3px 0; }  /* 表头列标题（Review/Todo） */
+    .day-list-head .col-title.weekday { flex: 0 0 100px; }                                     /* 表头左侧 Weekday 列宽 */
+    .cal-day-row { display: flex; align-items: stretch; gap: 24px; border-radius: 6px; padding: 6px 8px; border: 1px solid #e9ecef; font-size: 0.92rem; }  /* 单日行：日期格 + Review + Todo；gap = 各列间距 */
+    .cal-day-row .day-label { flex: 0 0 100px; font-weight: bold; line-height: 1.3; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; }  /* 左侧 星期/日期（+ 编辑铅笔） */
+    .cal-day-row .field-block { flex: 1 1 0; border-radius: 6px; padding: 6px 8px; min-height: 40px; }  /* Review / Todo 单元格容器 */
+    .cal-day-row .field-text { white-space: pre-wrap; }                                        /* 单元格正文，保留换行 */
+    .cal-day-row .dc-view { white-space: pre-wrap; }                                           /* 只读展示文本 */
+    .cal-day-row .dc-input { display: none; width: 100%; resize: vertical; background-color: transparent; }  /* 编辑态 textarea，默认隐藏 */
+    .cal-day-row.dc-editing .dc-view { display: none; }                                        /* 日报进入编辑：隐藏只读、显示 textarea */
+    .cal-day-row.dc-editing .dc-input { display: block; }
+    .cal-day-row .dc-toggle { font-size: 1.0rem; padding: 1px 4px; line-height: 1.0; }         /* 日报当天行的铅笔/保存按钮 */
+    #planForm .dc-toggle { font-size: 1.0rem; padding: 1px 4px; line-height: 1.0; }            /* 周计划卡片的铅笔/保存按钮 */
+    .wp-edit { display: none; }                                                                /* 周计划编辑区，默认隐藏 */
+    #planForm.wp-editing .wp-view { display: none; }                                           /* 周计划进入编辑：隐藏只读、显示编辑区 */
+    #planForm.wp-editing .wp-edit { display: block; }
+    .cal-day-row.future { background-color: #fff; color: #adb5bd; }                            /* 未来日期行：白底置灰（各周共用） */
+    .week-band { border-left: 4px solid #adb5bd; padding: 8px 12px; margin-bottom: 18px; border-radius: 6px; }  /* 每周区块容器（左边框色/底色由 last/this/next 覆盖） */
+    .week-plan-card { background: #f8f9fa; border: 1px solid #e9ecef; border-radius: 8px; padding: 10px 12px; }  /* 计划卡默认底色（由 last/this/next 覆盖） */
+
+    /* ============================================================
+       last 上周：灰色主题（band / 计划卡 / 日报 Review·Todo·past 均为灰）
+       （覆盖下面 this 的默认蓝）
+       ============================================================ */
+    .week-band.last { border-left-color: #adb5bd; background-color: #f1f3f5; }                 /* 上周大背景：灰 */
+    .week-band.last .week-plan-card { background: #e9ecef; }                                   /* 上周计划卡：灰 */
+    .week-band.last .cal-day-row .review { background-color: #e9ecef; color: #495057; }        /* 上周 Review 块：灰 */
+    .week-band.last .cal-day-row .todo { background-color: #e9ecef; color: #495057; }          /* 上周 Todo 块：灰，若用更深的灰进行highlight可用dee2e6 */
+    .week-band.last .cal-day-row.past { background-color: #e9ecef; }                          /* 上周过去日行底色：灰 */
+
+    /* ============================================================
+       this 本周：蓝色主题（即下面的“默认色”，上周/下周各自覆盖）
+       背景 #eff6ff → past 行 #e7f3ff → Review #e7f3ff → Todo #d7ebff（逐级略深）
+       ============================================================ */
+    .cal-day-row .review { background-color: #e7f3ff; color: #1565c0; }                        /* Review 块：浅蓝（默认=本周） */
+    .cal-day-row .todo { background-color: #e7f3ff; color: #1565c0; }                          /* Todo 块：浅蓝，若用比 Review 略深的蓝可用d7ebff */
+    .cal-day-row .field-block.review .dc-input { color: #1565c0; }                             /* Review 编辑框文字色 */
+    .cal-day-row .field-block.todo .dc-input { color: #1565c0; }                               /* Todo 编辑框文字色 */
+    .cal-day-row.past { background-color: #e7f3ff; }                                           /* 过去/当天行底色：本周蓝（上周另有灰色覆盖） */
+    .week-band.this { border-left-color: #0d6efd; background-color: #eff6ff; }                 /* 本周大背景：蓝 */
+    .week-band.this .week-plan-card { background: #e7f3ff; }                                   /* 本周计划卡：浅蓝 */
+
+    /* ============================================================
+       next 下周：浅黄主题（仅 band + 计划卡；下周无日报行）
+       ============================================================ */
+    .week-band.next { border-left-color: #f0ad4e; background-color: #fffdf0; }                 /* 下周大背景：浅黄 */
+    .week-band.next .week-plan-card { background: #fefaed; }                                   /* 下周计划卡：浅黄 */
+
+    /* ============================================================
+       其他：周计划编辑表单元素（计划卡标题 / 计划条目行 / 只读列表）
+       ============================================================ */
+    .week-plan-card .section-label { font-weight: bold; color: #000000; }                      /* 计划卡标题「计划」 */
+    .plan-item-row { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }       /* 单条计划行（上移/下移/输入/删除） */
+    .plan-item-row input[type=text] { flex: 1 1 auto; }                                        /* 计划文本输入框 */
+    .plan-item-row .btn { flex: 0 0 auto; }                                                    /* 计划行内按钮 */
+    ul.plan-readonly { list-style: none; padding-left: 0; margin: 6px 0 0; }                   /* 只读计划列表 */
+    ul.plan-readonly li { margin: 2px 0; }                                                     /* 只读计划条目 */
 </style>
 {% endblock %}
+
+{# 计划区：editable 时为可编辑表单，否则只读 [  ]/[✅] 列表（或空） #}
+{% macro plan_area(week, editable) %}
+<div class="week-plan-card">
+    {% if editable %}
+    <form method="POST" action="{{ url_for('dashboard.weekly_plan_save') }}" id="planForm">
+        <input type="hidden" name="uid" value="{{ uid }}">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+            <span class="section-label">计划 <small class="text-muted fw-normal">（提交窗口：周六 00:00 ~ 周一 18:00；不超过5条，每条不超过30字符）</small></span>
+            <button type="button" class="btn btn-outline-primary dc-toggle wp-toggle" onclick="toggleWpEdit(this)" title="编辑">
+                <i class="bi bi-pencil"></i>
+            </button>
+        </div>
+        {# 默认只读展示 #}
+        <div class="wp-view">
+            {% if week.plan_items %}
+            <ul class="plan-readonly">
+                {% for it in week.plan_items %}<li>{% if it.status == 'done' %}✅{% else %}[  ]{% endif %} {{ it.text }}</li>{% endfor %}
+            </ul>
+            {% else %}
+            <div class="text-muted mt-1">NA</div>
+            {% endif %}
+        </div>
+        {# 编辑态：默认隐藏 #}
+        <div class="wp-edit">
+            <div class="text-end mb-2">
+                <button type="button" class="btn btn-sm btn-outline-primary" onclick="addItem()"><i class="bi bi-plus-lg"></i> 添加</button>
+            </div>
+            <div id="planItems">
+                {% for it in week.plan_items %}
+                <div class="plan-item-row">
+                    <button type="button" class="btn btn-sm btn-outline-secondary py-0" onclick="moveItem(this,-1)" title="上移"><i class="bi bi-arrow-up-short"></i></button>
+                    <button type="button" class="btn btn-sm btn-outline-secondary py-0" onclick="moveItem(this,1)" title="下移"><i class="bi bi-arrow-down-short"></i></button>
+                    <input type="text" name="item" class="form-control form-control-sm" value="{{ it.text }}" maxlength="30" placeholder="计划条目">
+                    <button type="button" class="btn btn-sm btn-outline-danger py-0" onclick="this.parentElement.remove()" title="删除"><i class="bi bi-x-lg"></i></button>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </form>
+    {% else %}
+    <div class="mb-2"><span class="section-label">计划</span></div>
+    {% if week.plan_items %}
+    <ul class="plan-readonly">
+        {% for it in week.plan_items %}<li>{% if it.status == 'done' %}[✅]{% else %}[  ]{% endif %} {{ it.text }}</li>{% endfor %}
+    </ul>
+    {% else %}
+    <div class="text-muted mt-1">NA</div>
+    {% endif %}
+    {% endif %}
+</div>
+{% endmacro %}
+
+{# 日报表格：day.can_edit 时为可编辑行，否则只读。上周全部只读（can_edit=False）。 #}
+{% macro day_list(days) %}
+<div class="day-list-head mt-2">
+    <div class="col-title weekday">Weekday</div>
+    <div class="col-title review">Review</div>
+    <div class="col-title todo">Todo</div>
+</div>
+<div class="day-list">
+    {% for day in days %}
+    {% if day.can_edit %}
+    <form class="cal-day-row past" method="POST" action="{{ url_for('dashboard.daily_completion_save') }}">
+        <input type="hidden" name="uid" value="{{ uid }}">
+        <div class="day-label">
+            <span>{{ day.weekday }} {{ day.date_str }}</span>
+            <button type="button" class="btn btn-outline-primary dc-toggle" onclick="toggleDcEdit(this)" title="编辑">
+                <i class="bi bi-pencil"></i>
+            </button>
+        </div>
+        <div class="field-block review">
+            <div class="dc-view field-text">{{ day.review or '' }}</div>
+            <textarea name="review" class="form-control form-control-sm dc-input" rows="2" maxlength="100">{{ day.review or '' }}</textarea>
+        </div>
+        <div class="field-block todo">
+            <div class="dc-view field-text">{{ day.todo or '' }}</div>
+            <textarea name="todo" class="form-control form-control-sm dc-input" rows="2" maxlength="100">{{ day.todo or '' }}</textarea>
+        </div>
+    </form>
+    {% else %}
+    <div class="cal-day-row {% if day.future %}future{% else %}past{% endif %}">
+        <div class="day-label">
+            <span>{{ day.weekday }} {{ day.date_str }}</span>
+            {% if day.present %}<i class="bi bi-check-circle-fill text-success"></i>{% endif %}
+        </div>
+        {% if not day.future %}
+        <div class="field-block review">{% if day.review %}<div class="field-text">{{ day.review }}</div>{% endif %}</div>
+        <div class="field-block todo">{% if day.todo %}<div class="field-text">{{ day.todo }}</div>{% endif %}</div>
+        {% endif %}
+    </div>
+    {% endif %}
+    {% endfor %}
+</div>
+{% endmacro %}
+
 {% block content %}
 <div class="card p-4">
-    <div class="d-flex justify-content-between align-items-center mb-4">
-        <h4>{{ name }} 的进展日历</h4>
-        <div>
-            <a href="/detail/{{ uid }}?offset={{ prev_offset }}" class="btn btn-outline-secondary btn-sm"><i class="bi bi-chevron-left"></i> 前4周</a>
-            <a href="/detail/{{ uid }}?offset={{ next_offset }}" class="btn btn-outline-secondary btn-sm">后4周 <i class="bi bi-chevron-right"></i></a>
-            <a href="/" class="btn btn-outline-secondary btn-sm ms-2">返回</a>
-        </div>
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h4 class="mb-0">{{ name }} <small class="text-muted fs-6">的工作规划与推进概览</small></h4>
+        <a href="/" class="btn btn-outline-secondary btn-sm">返回</a>
     </div>
-    <p class="text-muted small">UID: {{ uid }} | {{ date_range }}</p>
+    <p class="text-muted small mb-3">UID: {{ uid }}</p>
 
-    {# 表头：固定一行周一到周日 #}
-    <div class="cal-grid mb-2">
-        <div class="cal-header weekday">周一</div>
-        <div class="cal-header weekday">周二</div>
-        <div class="cal-header weekday">周三</div>
-        <div class="cal-header weekday">周四</div>
-        <div class="cal-header weekday">周五</div>
-        <div class="cal-header weekend">周六</div>
-        <div class="cal-header weekend">周日</div>
-    </div>
-
-    {% for week_info in weeks %}
-    <div class="mb-3">
-        {% if week_info.plan %}
-        <div class="week-plan mb-1">
-            <span class="week-plan-label">本周计划:</span>{{ week_info.plan }}
-        </div>
+    {# —— 上周：完成情况 —— #} 
+    <div class="week-band last">
+        <div class="fw-bold text-muted mb-1">上周 · 工作回顾 &nbsp;&nbsp; <small class="fw-normal">{{ last_week.date_range }}</small></div>
+        {{ plan_area(last_week, last_week.can_edit) }}
+        {% if last_week.plan_items %}
+        {% set _done = last_week.plan_items | selectattr('status', 'equalto', 'done') | list %}
+        <div class="small text-muted mt-1">完成 {{ _done | length }}/{{ last_week.plan_items | length }}</div>
         {% endif %}
-        <div class="cal-grid">
-            {% for day in week_info.days %}
-            <div class="cal-day {% if day.future %}future{% elif day.present %}present{% else %}absent{% endif %}">
-                <span class="day-num">{{ day.date_str }}</span>
-                {% if day.present %}
-                <i class="bi bi-check-circle-fill text-success" style="font-size:0.7rem;"></i>
-                {% endif %}
-                {% if day.completion %}
-                <div class="completion-text">{{ day.completion }}</div>
-                {% endif %}
-            </div>
-            {% endfor %}
-        </div>
+        {{ day_list(last_week.days) }}
+        <div class="mt-2 p-2 bg-light rounded text-muted small"><i class="bi bi-robot"></i> AI 总结 · 开发中</div>
     </div>
-    {% endfor %}
 
-    <div class="card p-4 mt-4">
-        <h5 class="mb-3">近30条签到记录</h5>
-        <div class="row row-cols-5 g-1">
-            {% for ts in recent_checkins %}
-            <div class="col"><span class="badge bg-secondary fs-6">{{ ts }}</span></div>
-            {% endfor %}
+    {# —— 本周：计划 + 日报 + AI —— #}
+    <div class="week-band this">
+        <div class="fw-bold text-primary mb-1">本周 · 推进详情 &nbsp;&nbsp; <small class="text-muted fw-normal">{{ this_week.date_range }}</small>{% if this_week.can_edit %} <span class="badge bg-primary">可编辑</span>{% endif %}</div>
+        {{ plan_area(this_week, this_week.can_edit) }}
+        {{ day_list(this_week.days) }}
+        <div class="mt-2 p-2 bg-light rounded text-muted small"><i class="bi bi-robot"></i> AI 总结 · 开发中</div>
+    </div>
+
+    {# —— 下周：待生效计划 —— #}
+    <div class="week-band next">
+        <div class="fw-bold text-warning mb-1">下周 · 待生效计划 &nbsp;&nbsp; <small class="text-muted fw-normal">{{ next_week.date_range }}</small>{% if next_week.can_edit %} <span class="badge bg-warning text-dark">可编辑</span>{% endif %}</div>
+        {{ plan_area(next_week, next_week.can_edit) }}
+    </div>
+
+    <div class="card p-3 mt-2">
+        <h6 class="mb-2">近30条签到记录</h6>
+        <div class="row row-cols-6 g-1">
+            {% for ts in recent_checkins %}<div class="col"><span class="badge bg-secondary">{{ ts }}</span></div>{% endfor %}
         </div>
     </div>
 </div>
+
+<script>
+function addItem() {
+    var row = document.createElement('div');
+    row.className = 'plan-item-row';
+    row.innerHTML =
+        '<button type="button" class="btn btn-sm btn-outline-secondary py-0" onclick="moveItem(this,-1)" title="上移"><i class="bi bi-arrow-up-short"></i></button>' +
+        '<button type="button" class="btn btn-sm btn-outline-secondary py-0" onclick="moveItem(this,1)" title="下移"><i class="bi bi-arrow-down-short"></i></button>' +
+        '<input type="text" name="item" class="form-control form-control-sm" maxlength="30" placeholder="计划条目">' +
+        '<button type="button" class="btn btn-sm btn-outline-danger py-0" onclick="this.parentElement.remove()" title="删除"><i class="bi bi-x-lg"></i></button>';
+    var box = document.getElementById('planItems');
+    if (box) box.appendChild(row);
+}
+function moveItem(btn, dir) {
+    var row = btn.parentElement;
+    var sib = dir < 0 ? row.previousElementSibling : row.nextElementSibling;
+    if (sib) row.parentNode.insertBefore(row, dir < 0 ? sib : sib.nextElementSibling);
+}
+// daily completion：当天行点击铅笔进入编辑，再次点击（变保存）提交
+function toggleDcEdit(btn) {
+    var form = btn.closest('form');
+    if (form.classList.contains('dc-editing')) {
+        form.submit();  // 编辑态 -> 保存
+    } else {
+        form.classList.add('dc-editing');
+        btn.classList.remove('btn-outline-primary');
+        btn.classList.add('btn-success');
+        btn.innerHTML = '<i class="bi bi-save"></i>';
+        btn.title = '保存';
+    }
+}
+// weekly plan：点击铅笔进入编辑，再次点击（变保存）提交
+function toggleWpEdit(btn) {
+    var form = btn.closest('form');
+    if (form.classList.contains('wp-editing')) {
+        form.submit();  // 编辑态 -> 保存
+    } else {
+        form.classList.add('wp-editing');  // 显示 .wp-edit，隐藏 .wp-view（CSS）
+        btn.classList.remove('btn-outline-primary');
+        btn.classList.add('btn-success');
+        btn.innerHTML = '<i class="bi bi-save"></i>';
+        btn.title = '保存';
+    }
+}
+</script>
 {% endblock %}
