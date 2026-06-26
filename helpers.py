@@ -151,8 +151,8 @@ def compute_upcoming_instances(slot, n=4):
     else:  # recurring
         target_dow = slot['day_of_week']
         days_ahead = (target_dow - today.weekday()) % 7
-        if days_ahead == 0 and datetime.now().hour >= slot['start_hour']:
-            days_ahead = 7
+        # 今天就是活动日时，始终保留今天的实例（无论是否已开始/结束）：
+        # 已结束的实例由 is_instance_expired 在渲染/预约时判定为只读/拒绝，不再从这里剔除。
         first_date = today + timedelta(days=days_ahead)
         return [(first_date + timedelta(weeks=i)).strftime('%Y-%m-%d') for i in range(n)]
 
