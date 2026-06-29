@@ -115,5 +115,22 @@ def ensure_tables():
                      description TEXT NOT NULL,
                      created_at DATETIME DEFAULT CURRENT_TIMESTAMP)''')
 
+    # LLM 请求/响应追踪：每次 llm.call_deepseek 调用落库一行
+    # request_id 唯一标识单次请求；session_id 把同一会话(多轮)的请求归到一组，建索引便于按 id 取回
+    # prompt/token_usage 存 JSON 字符串(TEXT)；requested_at 为请求发出时刻
+    conn.execute('''CREATE TABLE IF NOT EXISTS llm_calls
+                    (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                     request_id TEXT NOT NULL UNIQUE,
+                     session_id TEXT NOT NULL,
+                     uid TEXT,
+                     model TEXT,
+                     prompt TEXT,
+                     response TEXT,
+                     status TEXT NOT NULL DEFAULT 'success' CHECK(status IN ('success','error')),
+                     token_usage TEXT,
+                     error TEXT,
+                     requested_at DATETIME)''')
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_llm_calls_session ON llm_calls(session_id)")
+
     conn.commit()
     conn.close()

@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime, timedelta
 from db import get_db_connection
 
@@ -118,7 +119,8 @@ def _auto_complete_weekly_plan_items(uid, review, date_str):
                 return
             from llm import judge_completed_plan_items
             items = [{'id': r['id'], 'text': r['text']} for r in rows]
-            done_ids = judge_completed_plan_items(review, items)
+            session_id = uuid.uuid4().hex
+            done_ids = judge_completed_plan_items(review, items, session_id=session_id, uid=uid)
             for item_id in done_ids:
                 conn.execute(
                     "UPDATE weekly_plan_items SET status='done', completed_date=?, completed_at=CURRENT_TIMESTAMP "

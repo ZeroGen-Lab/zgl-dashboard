@@ -1,4 +1,5 @@
 import sqlite3
+import uuid
 from flask import Blueprint, render_template, request, redirect, url_for, flash, session
 from datetime import datetime, timedelta
 from db import get_db_connection
@@ -346,7 +347,8 @@ def generate_summary(uid):
         flash('该成员的摘要已生成，无需重复生成')
         return redirect(url_for('dashboard.monthly_summary', month_offset=offset))
     from llm import generate_daily_summary
-    result = generate_daily_summary(uid, member['name'], member['daily_completions_text'])
+    session_id = uuid.uuid4().hex
+    result = generate_daily_summary(uid, member['name'], member['daily_completions_text'], session_id=session_id)
     if result:
         flash(f'{member["name"]} 的月度摘要已生成')
     else:
@@ -368,7 +370,8 @@ def generate_suggestion(uid):
         flash('该成员的工作建议已生成，无需重复生成')
         return redirect(url_for('dashboard.monthly_summary', month_offset=offset))
     from llm import generate_work_suggestion
-    result = generate_work_suggestion(uid, member['name'], member['daily_completions_text'], member['weekly_plans_text'])
+    session_id = uuid.uuid4().hex
+    result = generate_work_suggestion(uid, member['name'], member['daily_completions_text'], member['weekly_plans_text'], session_id=session_id)
     if result:
         flash(f'{member["name"]} 的工作建议已生成')
     else:
