@@ -6,6 +6,7 @@ from routes_dashboard import dashboard_bp
 from routes_booking import booking_bp
 from routes_api import api_bp
 from routes_okr import okr_bp
+from routes_zgantt import zgantt_bp
 
 app = Flask(__name__)
 app.config.update(flask_config)
@@ -18,6 +19,7 @@ app.register_blueprint(dashboard_bp)
 app.register_blueprint(booking_bp)
 app.register_blueprint(api_bp)
 app.register_blueprint(okr_bp)
+app.register_blueprint(zgantt_bp)
 
 
 @app.template_filter('fmt_time')

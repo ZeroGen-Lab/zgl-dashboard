@@ -113,7 +113,7 @@ def generate_daily_summary(uid, name, completions_text, session_id=None):
         conn = get_db_connection()
         conn.execute(
             "INSERT INTO monthly_summaries (uid, month_key, summary) VALUES (?, ?, ?) "
-            "ON CONFLICT(uid, month_key) DO UPDATE SET summary=?, generated_at=CURRENT_TIMESTAMP",
+            "ON CONFLICT(uid, month_key) DO UPDATE SET summary=?, generated_at=datetime('now','localtime')",
             (uid, month_key, result, result)
         )
         conn.commit()
@@ -138,7 +138,7 @@ def generate_work_suggestion(uid, name, completions_text, plans_text, session_id
         conn = get_db_connection()
         conn.execute(
             "INSERT INTO monthly_summaries (uid, month_key, suggestion) VALUES (?, ?, ?) "
-            "ON CONFLICT(uid, month_key) DO UPDATE SET suggestion=?, generated_at=CURRENT_TIMESTAMP",
+            "ON CONFLICT(uid, month_key) DO UPDATE SET suggestion=?, generated_at=datetime('now','localtime')",
             (uid, month_key, result, result)
         )
         conn.commit()

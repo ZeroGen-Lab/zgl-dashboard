@@ -123,7 +123,7 @@ def _auto_complete_weekly_plan_items(uid, review, date_str):
             done_ids = judge_completed_plan_items(review, items, session_id=session_id, uid=uid)
             for item_id in done_ids:
                 conn.execute(
-                    "UPDATE weekly_plan_items SET status='done', completed_date=?, completed_at=CURRENT_TIMESTAMP "
+                    "UPDATE weekly_plan_items SET status='done', completed_date=?, completed_at=datetime('now','localtime') "
                     "WHERE id=? AND status='open'",
                     (date_str, item_id))
             conn.commit()

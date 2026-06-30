@@ -1,0 +1,393 @@
+{% extends "base.html" %}
+
+{% block extra_style %}
+<style>
+/* ===== 甘特图 ===== */
+.gantt-scroll{overflow-x:auto; border:1px solid #dee2e6; border-radius:8px}
+.gantt-row{display:grid; min-width:max-content}
+.gantt-head{background:#f8f9fa; border-bottom:2px solid #dee2e6; position:sticky; top:0; z-index:3}
+.gantt-head .gantt-label{background:#f8f9fa; font-weight:bold}
+.gantt-label{position:sticky; left:0; z-index:2; background:#fff; padding:6px 8px;
+             border-right:1px solid #dee2e6; white-space:nowrap; overflow:hidden;
+             text-overflow:ellipsis; max-width:180px; font-size:.82rem}
+.gantt-day{padding:6px 0; text-align:center; font-size:.72rem; color:#495057; border-right:1px solid #f1f3f5}
+.gantt-day.weekend{background:#f1f3f5}
+.gantt-day.today{outline:2px solid #0d6efd; outline-offset:-2px; font-weight:bold; color:#0d6efd}
+.gantt-item{border-bottom:1px solid #f1f3f5; min-height:34px}
+.gantt-item .gantt-label{display:flex; align-items:center; gap:4px}
+.gantt-bar{height:18px; margin:8px 0; border-radius:5px; align-self:center}
+.gantt-bar.done{background:#9be7a8}
+.gantt-bar.progress{background:#198754}
+.gantt-complete-btn{height:22px; padding:0 10px; align-self:center; justify-self:start; margin:0 4px;
+                    border:1px solid #198754; background:#fff; color:#198754;
+                    border-radius:11px; font-size:.7rem; cursor:pointer; white-space:nowrap}
+.gantt-grp-row{background:#e9ecef; border-top:1px solid #dee2e6}
+.gantt-grp-label{grid-column:1 / -1; position:sticky; left:0; background:#e9ecef;
+                 padding:6px 8px; font-weight:600; font-size:.85rem; display:flex; align-items:center; gap:8px}
+.gantt-action{grid-column:1 / -1; background:#fffbeb; padding:6px 8px; border-bottom:1px solid #f1f3f5; font-size:.8rem}
+.muted{color:#6c757d}
+
+/* ===== 月度考勤网格（全员：行=成员，列=当天） ===== */
+.att-scroll{overflow-x:auto; border:1px solid #dee2e6; border-radius:8px}
+.att-grid{display:grid; width:100%; align-items:center}
+.att-head{background:#f8f9fa; border-bottom:2px solid #dee2e6; position:sticky; top:0; z-index:3}
+.att-head .att-name{background:#f8f9fa; font-weight:bold}
+.att-name{position:sticky; left:0; z-index:2; background:#fff; padding:4px 6px;
+          border-right:1px solid #dee2e6; white-space:nowrap; font-size:.76rem}
+.att-name.is-me{font-weight:bold; box-shadow: inset 3px 0 0 #0d6efd}
+.att-hd{padding:2px 0; text-align:center; font-size:.6rem; line-height:1.05; color:#495057;
+        border-right:1px solid #f1f3f5; min-width:0}
+.att-hd.weekend{background:#f1f3f5}
+.att-hd.today{background:#0d6efd; color:#fff; font-weight:bold}
+.att-hd .wk{color:#6c757d}
+.att-cell-form{margin:0; padding:0; display:flex; min-width:0}
+.att-cell-sel{height:26px; width:100%; min-width:0; box-sizing:border-box;
+              border:1px solid #ced4da; border-radius:3px;
+              background:#fff; color:#495057; font-size:.85rem; padding:0; cursor:pointer}
+.att-cell{height:24px; border:none; border-radius:3px; background:#f8f9fa;
+          font-size:.6rem; padding:0; width:100%}
+button.att-cell{cursor:pointer}
+.att-cell.empty{background:#f8f9fa}
+.att-cell.weekend-col{background:#eef0f2}
+.att-cell.att-half{background:#c3e6cb}
+.att-cell.att-full{background:#198754}
+.att-cell.att-overtime{background:#0f5132}
+.chip{display:inline-block; padding:2px 10px; border:1px solid #dee2e6; border-radius:12px;
+       font-size:.78rem; margin:2px; color:#212529}
+.chip-departed{color:#6c757d; text-decoration:line-through}
+/* 平铺多选成员（checkbox 药丸） */
+.user-pick{display:inline-flex; align-items:center; gap:5px; background:#f8f9fa; border:1px solid #dee2e6;
+           border-radius:16px; padding:3px 10px; font-size:.8rem; cursor:pointer; user-select:none}
+.user-pick input{margin:0; cursor:pointer}
+.user-pick.disabled{opacity:.45; cursor:not-allowed; background:#e9ecef}
+.user-pick.disabled input{cursor:not-allowed}
+.user-pick.user-departed{border-style:dashed; opacity:.7}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="mb-0"><i class="bi bi-kanban"></i> ZGantt 项目管理</h4>
+</div>
+
+<!-- 项目选择器（项目状态 + 状态下拉 + 项目名称 + 项目下拉，同一行） -->
+<form method="get" action="{{ url_for('zgantt.project_page') }}" class="d-flex flex-wrap align-items-end gap-2 mb-3">
+    <div class="d-flex flex-column">
+        <label class="form-label small mb-0">项目状态</label>
+        <select name="status" class="form-select form-select-sm" style="width:120px" onchange="this.form.submit()">
+            <option value="all"    {% if status=='all' %}selected{% endif %}>所有</option>
+            <option value="active" {% if status=='active' %}selected{% endif %}>在研</option>
+            <option value="closed" {% if status=='closed' %}selected{% endif %}>结项</option>
+        </select>
+    </div>
+    <div class="d-flex flex-column flex-grow-1">
+        <label class="form-label small mb-0">项目名称</label>
+        <select name="project_id" class="form-select form-select-sm" onchange="this.form.submit()">
+            {% for p in projects %}
+            <option value="{{ p.id }}" {% if project and project.id==p.id %}selected{% endif %}>
+                {{ p.name }}（{{ '在研' if p.status=='active' else '结项' }}）
+            </option>
+            {% else %}
+            <option value="">（暂无项目）</option>
+            {% endfor %}
+        </select>
+    </div>
+    {% if is_admin %}
+    <button type="button" class="btn btn-sm btn-outline-primary" onclick="toggleNew()">+ 添加项目</button>
+    {% endif %}
+    <input type="hidden" name="m" value="{{ m }}">
+</form>
+
+{% if is_admin %}
+<!-- 新建项目（管理员，点击「添加项目」展开） -->
+<div class="card mb-3" id="newProjectCard" style="display:none"><div class="card-body">
+    <form method="post" action="{{ url_for('zgantt.create_project') }}">
+        <div class="mb-2">
+            <label class="form-label small mb-1">项目名称</label>
+            <input name="name" class="form-control form-control-sm" placeholder="项目名称" required>
+        </div>
+        <div class="mb-2">
+            <label class="form-label small mb-1">成员</label>
+            <div class="d-flex flex-wrap gap-2">
+                {% for u in valid_users %}
+                <label class="user-pick">
+                    <input type="checkbox" name="members" value="{{ u.loginname }}">
+                    {{ u.label }}
+                </label>
+                {% endfor %}
+            </div>
+        </div>
+        <button class="btn btn-sm btn-primary">创建项目</button>
+    </form>
+</div></div>
+{% endif %}
+
+{% if project %}
+<!-- 项目元信息（结项按钮置最右） -->
+<div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2">
+    <div class="d-flex flex-wrap align-items-center gap-2">
+        <h5 class="mb-0">{{ project.name }}</h5>
+        <span class="badge {{ 'bg-success' if project.status=='active' else 'bg-secondary' }}">
+            {{ '在研' if project.status=='active' else '结项' }}
+        </span>
+        <span class="muted small">启动日 {{ project.start_date }} · 创建者 {{ project.created_by }}{% if project.closed_at %} · 结项于 {{ project.closed_at }}{% endif %}</span>
+    </div>
+    {% if is_admin and project_open %}
+    <form method="post" action="{{ url_for('zgantt.close_project') }}" data-confirm="确认结项「{{ project.name }}」？结项后项目变为只读，不可恢复。">
+        <input type="hidden" name="project_id" value="{{ project.id }}">
+        <button class="btn btn-sm btn-outline-danger">- 项目结项</button>
+    </form>
+    {% endif %}
+</div>
+
+<!-- 成员名册 + 项目成员调整（管理员） -->
+<div class="card mb-3"><div class="card-body py-2">
+    <div class="d-flex flex-wrap align-items-center justify-content-between gap-2">
+        <div class="d-flex flex-wrap align-items-center gap-1">
+            <b class="me-2">成员</b>
+            {% for mb in members %}
+                <span class="chip{% if mb.status=='departed' %} chip-departed{% endif %}">{{ mb.display }}{% if mb.status=='departed' %} ·离职{% endif %}</span>
+            {% else %}
+                <span class="muted small">（暂无成员）</span>
+            {% endfor %}
+        </div>
+        {% if is_admin and project_open %}
+        <button type="button" class="btn btn-sm btn-outline-secondary" onclick="toggleMembers()">项目成员调整</button>
+        {% endif %}
+    </div>
+    {% if is_admin and project_open %}
+    <div id="membersPanel" style="display:none" class="mt-3">
+        <form method="post" action="{{ url_for('zgantt.sync_members') }}">
+            <input type="hidden" name="project_id" value="{{ project.id }}">
+            <div class="d-flex flex-wrap gap-2">
+                {% for u in valid_users %}
+                {% set mb = member_by_login.get(u.loginname) %}
+                <label class="user-pick{% if mb and mb.status=='departed' %} user-departed{% endif %}">
+                    <input type="checkbox" name="members" value="{{ u.loginname }}" {{ 'checked' if mb and mb.status=='active' else '' }}>
+                    {{ u.label }}{% if mb and mb.status=='departed' %} ·已离职{% endif %}
+                </label>
+                {% endfor %}
+            </div>
+            <button class="btn btn-sm btn-primary mt-2">保存成员调整</button>
+        </form>
+    </div>
+    {% endif %}
+</div></div>
+
+<!-- 项目执行甘特图 -->
+<div class="card mb-3"><div class="card-body">
+    <div class="d-flex justify-content-between align-items-center mb-2">
+        <b>项目执行甘特图</b>
+    </div>
+
+    {% if can_edit and project_open %}
+    <div class="mb-3"><button type="button" class="btn btn-sm btn-outline-primary" data-open-modal="wg">+ 添加工作组</button></div>
+    {% endif %}
+
+    {% set gantt_cols = '180px repeat(' ~ gantt.n_days ~ ', minmax(26px, 1fr))' %}
+    <div class="gantt-scroll">
+        <!-- 表头 -->
+        <div class="gantt-row gantt-head" style="grid-template-columns: {{ gantt_cols }}">
+            <div class="gantt-label">工作组 / 工作项</div>
+            {% for d in gantt.days %}
+            <div class="gantt-day {{ 'weekend' if d.weekend else '' }} {{ 'today' if d.today else '' }}">{{ d.label }}</div>
+            {% endfor %}
+        </div>
+
+        {% for g in gantt.groups %}
+        <div class="gantt-row gantt-grp-row" style="grid-template-columns: {{ gantt_cols }}">
+            <div class="gantt-grp-label">
+                <span>{{ g.name }}</span>
+                {% if can_edit and project_open %}
+                <button type="button" class="btn btn-sm btn-link p-0 ms-2" data-open-modal="wi" data-group-id="{{ g.id }}">+ 工作项</button>
+                {% endif %}
+            </div>
+        </div>
+        {% for it in g.work_items %}
+        <div class="gantt-row gantt-item" style="grid-template-columns: {{ gantt_cols }}">
+            <div class="gantt-label">
+                <span>{{ it.title }}</span>
+                <span class="muted">@{{ it.owner_name }}</span>
+                {% if it.is_done %}<i class="bi bi-check-circle-fill text-success"></i>{% endif %}
+            </div>
+            <div class="gantt-bar {{ it.cls }}" style="grid-column: {{ it.col_start }} / span {{ it.span }}"{% if it.tooltip %} title="{{ it.tooltip }}"{% endif %}></div>
+            {% if it.can_complete %}
+            <button type="button" class="gantt-complete-btn" style="grid-column: {{ it.col_start + it.span }}"
+                    data-open-modal="done" data-action="{{ url_for('zgantt.complete_work_item', item_id=it.id) }}"
+                    data-title="{{ it.title }}">完成</button>
+            {% endif %}
+        </div>
+        {% endfor %}
+        {% else %}
+        <div class="muted small p-3">暂无工作组{% if can_edit and project_open %}，请添加第一个工作组{% endif %}。</div>
+        {% endfor %}
+    </div>
+</div></div>
+
+<!-- 月度考勤（全员：每人一行；本人只能编辑自己那行的可填日期） -->
+<div class="card mb-3"><div class="card-body">
+    <div class="d-flex justify-content-between align-items-center mb-2">
+        <b>月度考勤 · {{ att.m_key }}</b>
+        <div>
+            <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('zgantt.project_page', project_id=project.id, status=status, m=m+1) }}">‹ 上月</a>
+            {% if m > 0 %}
+            <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('zgantt.project_page', project_id=project.id, status=status, m=m-1) }}">下月 ›</a>
+            {% endif %}
+        </div>
+    </div>
+    <div class="mb-2 d-flex align-items-center gap-2 flex-wrap">
+        <span class="chip" style="background:#c3e6cb;color:#1c6d2c">0.5</span>
+        <span class="chip" style="background:#198754;color:#fff">1.0</span>
+        <span class="chip" style="background:#0f5132;color:#fff">1.5</span>
+    </div>
+
+    {% if att.rows %}
+    {% set att_cols = '130px repeat(' ~ att.n_days ~ ', minmax(28px, 1fr))' %}
+    <div class="att-scroll">
+        <!-- 第 0 行：稀疏日期/星期（仅周一 & 1 号打标签，避免密集重叠） -->
+        <div class="att-grid att-head" style="grid-template-columns: {{ att_cols }}">
+            <div class="att-name">成员 / 合计</div>
+            {% for day in att.days %}
+            <div class="att-hd {{ 'weekend' if day.weekend else '' }} {{ 'today' if day.today else '' }}" title="{{ day.iso }} 周{{ day.weekday_cn }}">
+                {% if day.anchor %}<div>{{ day.dom }}</div><div class="wk">周{{ day.weekday_cn }}</div>{% endif %}
+            </div>
+            {% endfor %}
+        </div>
+        {% for row in att.rows %}
+        <div class="att-grid" style="grid-template-columns: {{ att_cols }}">
+            <div class="att-name {{ 'is-me' if editable_loginname==row.loginname }}">
+                {{ row.display }}{% if row.status=='departed' %} ·离职{% endif %}
+                <span class="muted">· {{ row.total }}</span>
+            </div>
+            {% for day in att.days %}
+                {% set cur = row.att_map.get(day.iso) %}
+                {% if cur %}
+                    <div class="att-cell att-{{ cur }}" title="{{ day.iso }} 周{{ day.weekday_cn }}"></div>
+                {% elif editable_loginname == row.loginname and day.fillable %}
+                    <form method="post" action="{{ url_for('zgantt.set_attendance') }}" class="att-cell-form">
+                        <input type="hidden" name="project_id" value="{{ project.id }}">
+                        <input type="hidden" name="date" value="{{ day.iso }}">
+                        <input type="hidden" name="m" value="{{ m }}">
+                        <select name="att_type" class="att-cell-sel"
+                                onchange="this.form.submit()" title="{{ day.iso }} 周{{ day.weekday_cn }}">
+                            <option value="" disabled selected hidden>·</option>
+                            <option value="half">0.5</option>
+                            <option value="full">1</option>
+                            <option value="overtime">1.5</option>
+                        </select>
+                    </form>
+                {% else %}
+                    <div class="att-cell empty {{ 'weekend-col' if day.weekend else '' }}" title="{{ day.iso }} 周{{ day.weekday_cn }}"></div>
+                {% endif %}
+            {% endfor %}
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="muted small">（暂无成员）</div>
+    {% endif %}
+</div></div>
+
+{% else %}
+<div class="card"><div class="card-body muted">
+    {% if is_admin %}请先创建一个项目。{% else %}当前没有可见项目。{% endif %}
+</div></div>
+{% endif %}
+
+<!-- Confirm Modal（仿 okr.html） -->
+<div class="modal fade" id="confirmModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-sm">
+        <div class="modal-content">
+            <div class="modal-body pb-1"><p id="confirmModalMessage" class="mb-0"></p></div>
+            <div class="modal-footer d-flex justify-content-center gap-3">
+                <button type="button" class="btn btn-outline-secondary px-4" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary px-4" id="confirmModalConfirm">确认</button>
+            </div>
+        </div>
+    </div>
+</div>
+<!-- 编辑类弹窗（默认隐藏，点入口按钮才出现） -->
+<div class="modal fade" id="wgModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered modal-sm"><div class="modal-content">
+    <div class="modal-header py-2"><h6 class="modal-title">添加工作组</h6><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+    <div class="modal-body">
+      <form method="post" action="{{ url_for('zgantt.add_work_group') }}">
+        <input type="hidden" name="project_id" value="{{ project.id if project else '' }}">
+        <input name="name" class="form-control form-control-sm" placeholder="工作组名称" required>
+        <div class="text-end mt-2"><button class="btn btn-sm btn-primary">添加</button></div>
+      </form>
+    </div>
+  </div></div>
+</div>
+<div class="modal fade" id="wiModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered modal-sm"><div class="modal-content">
+    <div class="modal-header py-2"><h6 class="modal-title">添加工作项</h6><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+    <div class="modal-body">
+      <form method="post" action="{{ url_for('zgantt.add_work_item') }}">
+        <input type="hidden" name="project_id" value="{{ project.id if project else '' }}">
+        <input type="hidden" name="group_id" id="wiGroupId">
+        <input name="title" class="form-control form-control-sm" placeholder="工作项名称" required>
+        <div class="text-end mt-2"><button class="btn btn-sm btn-primary">添加</button></div>
+      </form>
+    </div>
+  </div></div>
+</div>
+<div class="modal fade" id="doneModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered"><div class="modal-content">
+    <div class="modal-header py-2"><h6 class="modal-title">标记完成</h6><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+    <div class="modal-body">
+      <div class="small text-muted mb-2" id="doneItemTitle"></div>
+      <form method="post" id="doneForm" action="">
+        <input name="summary" class="form-control form-control-sm" placeholder="一句话总结该工作成果（必填）" required>
+        <div class="text-end mt-2"><button class="btn btn-sm btn-success">确认完成</button></div>
+      </form>
+    </div>
+  </div></div>
+</div>
+
+<script>
+function toggleNew() {
+    var c = document.getElementById('newProjectCard');
+    if (c) c.style.display = (c.style.display === 'none' ? '' : 'none');
+}
+function toggleMembers() {
+    var c = document.getElementById('membersPanel');
+    if (c) c.style.display = (c.style.display === 'none' ? '' : 'none');
+}
+document.addEventListener('DOMContentLoaded', function() {
+    var modalEl = document.getElementById('confirmModal');
+    var modal = new bootstrap.Modal(modalEl);
+    document.querySelectorAll('form[data-confirm]').forEach(function(form) {
+        form.addEventListener('submit', function(e) {
+            e.preventDefault();
+            document.getElementById('confirmModalMessage').textContent = this.dataset.confirm;
+            var confirmBtn = document.getElementById('confirmModalConfirm');
+            var newBtn = confirmBtn.cloneNode(true);
+            confirmBtn.parentNode.replaceChild(newBtn, confirmBtn);
+            newBtn.addEventListener('click', function() { modal.hide(); form.submit(); });
+            modal.show();
+        });
+    });
+    // 编辑类弹窗（按需出现）：添加工作组 / 添加工作项 / 标记完成
+    var wgModal = new bootstrap.Modal(document.getElementById('wgModal'));
+    var wiModal = new bootstrap.Modal(document.getElementById('wiModal'));
+    var doneModal = new bootstrap.Modal(document.getElementById('doneModal'));
+    document.querySelectorAll('[data-open-modal="wg"]').forEach(function(b) {
+        b.addEventListener('click', function() { wgModal.show(); });
+    });
+    document.querySelectorAll('[data-open-modal="wi"]').forEach(function(b) {
+        b.addEventListener('click', function() {
+            document.getElementById('wiGroupId').value = this.getAttribute('data-group-id');
+            wiModal.show();
+        });
+    });
+    document.querySelectorAll('[data-open-modal="done"]').forEach(function(b) {
+        b.addEventListener('click', function() {
+            document.getElementById('doneItemTitle').textContent = this.getAttribute('data-title');
+            document.getElementById('doneForm').action = this.getAttribute('data-action');
+            doneModal.show();
+        });
+    });
+});
+</script>
+{% endblock %}

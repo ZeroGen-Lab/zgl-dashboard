@@ -35,12 +35,11 @@
                 <a class="nav-link {% if page=='stats' %}active{% endif %}" href="/stats"><i class="bi bi-bar-chart-line-fill"></i> Onsite</a>
                 <a class="nav-link {% if page=='booking' %}active{% endif %}" href="/booking"><i class="bi bi-calendar2-check"></i> Bookings</a>
                 <a class="nav-link {% if page=='okr' %}active{% endif %}" href="/okr"><i class="bi bi-bullseye"></i> OKR</a>
-                <a class="nav-link" href="javascript:location.reload()" title="Refresh">
-                    <i class="bi bi-arrow-clockwise"></i> Refresh
-                </a>
+                <a class="nav-link {% if page=='zgantt' %}active{% endif %}" href="/zgantt"><i class="bi bi-kanban"></i> ZGantt</a>
             </div>
             {% if session.get('user') %}
             <div class="navbar-nav ms-auto">
+                <a class="nav-link" href="javascript:location.reload()" title="Refresh"><i class="bi bi-arrow-clockwise"></i> </a>
                 <span class="nav-link text-light"><i class="bi bi-person-circle"></i> {{ session['user'] }}</span>
                 <a class="nav-link" href="/logout"><i class="bi bi-box-arrow-right"></i> Logout</a>
             </div>
