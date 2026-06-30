@@ -147,7 +147,7 @@ def build_attendance_grid(conn, project, members, months_back):
         days.append({
             'iso': d.isoformat(), 'dom': d.day, 'weekday': d.weekday(),
             'weekday_cn': WEEKDAY_CN[d.weekday()],
-            'anchor': (d.weekday() in (0, 3, 5)),    # 仅周一/四/六 打标签
+            'anchor': (d.day % 2 == 1),    
             'weekend': d.weekday() >= 5,
             'today': d == today,
             'fillable': day_fillable(d, today),

@@ -14,7 +14,7 @@
 .gantt-day.weekend{background:#f1f3f5}
 .gantt-day.today{outline:2px solid #0d6efd; outline-offset:-2px; font-weight:bold; color:#0d6efd}
 .gantt-item{border-bottom:1px solid #f1f3f5; min-height:34px}
-.gantt-item .gantt-label{display:flex; align-items:center; gap:4px}
+.gantt-item .gantt-label{display:flex; align-items:center; gap:4px; padding-left:22px}
 .gantt-bar{height:18px; margin:8px 0; border-radius:5px; align-self:center}
 .gantt-bar.done{background:#9be7a8}
 .gantt-bar.progress{background:#198754}
@@ -38,8 +38,9 @@
 .att-hd{padding:2px 0; text-align:center; font-size:.6rem; line-height:1.05; color:#495057;
         border-right:1px solid #f1f3f5; min-width:0}
 .att-hd.weekend{background:#f1f3f5}
-.att-hd.today{background:#0d6efd; color:#fff; font-weight:bold}
+.att-hd.today{outline:2px solid #0d6efd; outline-offset:-2px; background:#fff; color:#0d6efd; font-weight:bold}
 .att-hd .wk{color:#6c757d}
+.att-hd.today .wk{color:#0d6efd}
 .att-cell-form{margin:0; padding:0; display:flex; min-width:0}
 .att-cell-sel{height:26px; width:100%; min-width:0; box-sizing:border-box;
               border:1px solid #ced4da; border-radius:3px;
@@ -176,14 +177,13 @@ button.att-cell{cursor:pointer}
 
 <!-- 项目执行甘特图 -->
 <div class="card mb-3"><div class="card-body">
-    <div class="d-flex justify-content-between align-items-center mb-2">
+    <div class="d-flex align-items-center gap-3 mb-2">
         <b>项目执行甘特图</b>
+        {% if can_edit and project_open %}
+            <button type="button" class="btn btn-sm btn-outline-primary" data-open-modal="wg">+ 添加工作组</button>
+        {% endif %}
     </div>
-
-    {% if can_edit and project_open %}
-    <div class="mb-3"><button type="button" class="btn btn-sm btn-outline-primary" data-open-modal="wg">+ 添加工作组</button></div>
-    {% endif %}
-
+    
     {% set gantt_cols = '180px repeat(' ~ gantt.n_days ~ ', minmax(26px, 1fr))' %}
     <div class="gantt-scroll">
         <!-- 表头 -->
@@ -226,19 +226,19 @@ button.att-cell{cursor:pointer}
 
 <!-- 月度考勤（全员：每人一行；本人只能编辑自己那行的可填日期） -->
 <div class="card mb-3"><div class="card-body">
-    <div class="d-flex justify-content-between align-items-center mb-2">
+    <div class="position-relative d-flex justify-content-between align-items-center mb-2">
         <b>月度考勤 · {{ att.m_key }}</b>
+        <div class="position-absolute start-50 translate-middle-x d-flex align-items-center gap-2">
+            <span class="chip" style="background:#c3e6cb;color:#1c6d2c">0.5</span>
+            <span class="chip" style="background:#198754;color:#fff">1.0</span>
+            <span class="chip" style="background:#0f5132;color:#fff">1.5</span>
+        </div>
         <div>
             <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('zgantt.project_page', project_id=project.id, status=status, m=m+1) }}">‹ 上月</a>
             {% if m > 0 %}
             <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('zgantt.project_page', project_id=project.id, status=status, m=m-1) }}">下月 ›</a>
             {% endif %}
         </div>
-    </div>
-    <div class="mb-2 d-flex align-items-center gap-2 flex-wrap">
-        <span class="chip" style="background:#c3e6cb;color:#1c6d2c">0.5</span>
-        <span class="chip" style="background:#198754;color:#fff">1.0</span>
-        <span class="chip" style="background:#0f5132;color:#fff">1.5</span>
     </div>
 
     {% if att.rows %}
