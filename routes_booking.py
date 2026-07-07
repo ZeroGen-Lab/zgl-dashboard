@@ -33,6 +33,15 @@ def _validate_time(start_hour, end_hour):
     return None
 
 
+def _slot_next_date(slot_dict):
+    """排序用：返回 slot 下一次发生日期 (YYYY-MM-DD)。
+    已过期的一次性活动用哨兵日期排到最后。"""
+    if slot_dict.get('expired'):
+        return '9999-12-31'
+    insts = compute_upcoming_instances(slot_dict, n=1)
+    return insts[0] if insts else '9999-12-31'
+
+
 @booking_bp.route('/')
 @login_required
 def booking():
@@ -80,7 +89,7 @@ def booking():
         """SELECT b.id, b.instance_date, s.title, s.slot_type, s.start_hour, s.end_hour,
                   s.specific_date, s.day_of_week, s.publisher
            FROM bookings b JOIN booking_slots s ON b.slot_id=s.id
-           WHERE b.booker=? AND b.status='active' ORDER BY b.instance_date""",
+           WHERE b.booker=? AND b.status='active' ORDER BY b.instance_date, s.start_hour""",
         (current_user,)
     ).fetchall()
 
@@ -94,11 +103,16 @@ def booking():
         d['expired'] = (d['slot_type'] == 'one_time' and d['specific_date']
                         and is_instance_expired(d, d['specific_date']))
         my_slots.append(d)
+    my_slots.sort(key=lambda d: (_slot_next_date(d), d['start_hour']))
 
     conn.close()
 
     one_time_slots = [s for s in display_slots if s['slot']['slot_type'] == 'one_time']
     recurring_slots = [s for s in display_slots if s['slot']['slot_type'] == 'recurring']
+    # 一次性活动按 (活动日期, 开始时间) 升序；越近越靠前
+    one_time_slots.sort(key=lambda item: (item['slot']['specific_date'], item['slot']['start_hour']))
+    # 长期预约按 (下一次实例日期, 开始时间) 升序；instances[0] 已是最近一次实例
+    recurring_slots.sort(key=lambda item: (item['instances'][0]['date'], item['slot']['start_hour']))
     day_names = {0: '周一', 1: '周二', 2: '周三', 3: '周四', 4: '周五', 5: '周六', 6: '周日'}
 
     return render_template('booking.html', page='booking',
