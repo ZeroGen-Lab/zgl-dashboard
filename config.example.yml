@@ -5,6 +5,7 @@
 # 生产环境配置
 server:
   db_path: attendance.db
+  db_bak_dir: /zero/zgl-dashboard-data/db
   port: 5000
   secret_key: YOUR_SECRET_KEY_HERE
   api_secret: YOUR_API_SECRET_HERE

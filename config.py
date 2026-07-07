@@ -26,6 +26,7 @@ else:
     _effective = _server
 
 DB_PATH = _effective['db_path']
+DB_BAK_DIR = _effective['db_bak_dir']
 PORT = _effective['port']
 API_SECRET = _effective['api_secret']
 ALLOWED_CHECKIN_IPS = _effective['allowed_checkin_ips']
@@ -38,6 +39,7 @@ DEEPSEEK_BASE_URL = _effective.get('deepseek_base_url', 'https://api.deepseek.co
 flask_config = {
     'DB_PATH': DB_PATH,
     'API_SECRET': API_SECRET,
+    'DB_BAK_DIR': DB_BAK_DIR,
     'ALLOWED_CHECKIN_IPS': ALLOWED_CHECKIN_IPS,
     'SECRET_KEY': SECRET_KEY,
     'DINGTALK_WEBHOOK_URL': DINGTALK_WEBHOOK_URL,

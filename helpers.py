@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime, timedelta
 from db import get_db_connection
 
@@ -118,10 +119,11 @@ def _auto_complete_weekly_plan_items(uid, review, date_str):
                 return
             from llm import judge_completed_plan_items
             items = [{'id': r['id'], 'text': r['text']} for r in rows]
-            done_ids = judge_completed_plan_items(review, items)
+            session_id = uuid.uuid4().hex
+            done_ids = judge_completed_plan_items(review, items, session_id=session_id, uid=uid)
             for item_id in done_ids:
                 conn.execute(
-                    "UPDATE weekly_plan_items SET status='done', completed_date=?, completed_at=CURRENT_TIMESTAMP "
+                    "UPDATE weekly_plan_items SET status='done', completed_date=?, completed_at=datetime('now','localtime') "
                     "WHERE id=? AND status='open'",
                     (date_str, item_id))
             conn.commit()
@@ -151,8 +153,8 @@ def compute_upcoming_instances(slot, n=4):
     else:  # recurring
         target_dow = slot['day_of_week']
         days_ahead = (target_dow - today.weekday()) % 7
-        if days_ahead == 0 and datetime.now().hour >= slot['start_hour']:
-            days_ahead = 7
+        # 今天就是活动日时，始终保留今天的实例（无论是否已开始/结束）：
+        # 已结束的实例由 is_instance_expired 在渲染/预约时判定为只读/拒绝，不再从这里剔除。
         first_date = today + timedelta(days=days_ahead)
         return [(first_date + timedelta(weeks=i)).strftime('%Y-%m-%d') for i in range(n)]
 

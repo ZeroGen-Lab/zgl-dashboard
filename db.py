@@ -115,5 +115,89 @@ def ensure_tables():
                      description TEXT NOT NULL,
                      created_at DATETIME DEFAULT CURRENT_TIMESTAMP)''')
 
+    # LLM 请求/响应追踪：每次 llm.call_deepseek 调用落库一行
+    # request_id 唯一标识单次请求；session_id 把同一会话(多轮)的请求归到一组，建索引便于按 id 取回
+    # prompt/token_usage 存 JSON 字符串(TEXT)；requested_at 为请求发出时刻
+    conn.execute('''CREATE TABLE IF NOT EXISTS llm_calls
+                    (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                     request_id TEXT NOT NULL UNIQUE,
+                     session_id TEXT NOT NULL,
+                     uid TEXT,
+                     model TEXT,
+                     prompt TEXT,
+                     response TEXT,
+                     status TEXT NOT NULL DEFAULT 'success' CHECK(status IN ('success','error')),
+                     token_usage TEXT,
+                     error TEXT,
+                     requested_at DATETIME)''')
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_llm_calls_session ON llm_calls(session_id)")
+
+    # ===== ZGantt 项目管理 =====
+    # zgantts：start_date 建项当天且不可变(永不 UPDATE)；status 在研(active)->结项(closed) 单向
+    conn.execute('''CREATE TABLE IF NOT EXISTS zgantts
+                    (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                     name TEXT NOT NULL,
+                     status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','closed')),
+                     start_date TEXT NOT NULL,
+                     created_by TEXT NOT NULL,
+                     closed_at DATETIME,
+                     created_at DATETIME DEFAULT (datetime('now','localtime')))''')
+    # 项目成员：永不删除，仅 status->departed；重新加人=复活(转回active,清departed_at)
+    conn.execute('''CREATE TABLE IF NOT EXISTS zgantt_members
+                    (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                     zgantt_id INTEGER NOT NULL REFERENCES zgantts(id),
+                     loginname TEXT NOT NULL,
+                     status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','departed')),
+                     departed_at DATETIME,
+                     created_at DATETIME DEFAULT (datetime('now','localtime')),
+                     UNIQUE(zgantt_id, loginname))''')
+    # 工作组：相关工作项的集合(无进度概念)；两级排序第一键=created_at
+    conn.execute('''CREATE TABLE IF NOT EXISTS work_groups
+                    (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                     zgantt_id INTEGER NOT NULL REFERENCES zgantts(id),
+                     name TEXT NOT NULL,
+                     created_by TEXT NOT NULL,
+                     created_at DATETIME DEFAULT (datetime('now','localtime')))''')
+    # 工作项：owner=创建者固定；end_date NULL=进行中, 非空=已完成(此时 summary 必填)
+    # zgantt_id 冗余(可经 group 导出)，便于按项目单表扫描；两级排序第二键=created_at
+    conn.execute('''CREATE TABLE IF NOT EXISTS work_items
+                    (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                     group_id INTEGER NOT NULL REFERENCES work_groups(id),
+                     zgantt_id INTEGER NOT NULL REFERENCES zgantts(id),
+                     title TEXT NOT NULL,
+                     owner TEXT NOT NULL,
+                     start_date TEXT NOT NULL,
+                     end_date TEXT,
+                     summary TEXT,
+                     created_at DATETIME DEFAULT (datetime('now','localtime')))''')
+    # 考勤：每个(zgantt,成员,日期)一行；改填=INSERT OR REPLACE，清空=DELETE
+    # att_type: half=半天(0.5) / full=全天(1.0) / overtime=加班(1.5)
+    conn.execute('''CREATE TABLE IF NOT EXISTS zgantt_attendance
+                    (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                     zgantt_id INTEGER NOT NULL REFERENCES zgantts(id),
+                     loginname TEXT NOT NULL,
+                     date TEXT NOT NULL,
+                     att_type TEXT NOT NULL CHECK(att_type IN ('half','full','overtime')),
+                     created_at DATETIME DEFAULT (datetime('now','localtime')),
+                     UNIQUE(zgantt_id, loginname, date))''')
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_zg_att_user_month "
+                 "ON zgantt_attendance(zgantt_id, loginname, date)")
+
+    # 上面新增的表（zgantts 系列、llm_calls 等）直接用 DEFAULT (datetime('now','localtime'))，
+    # 建表即为本地时间，无需触发器。下面这些「老表」在生产库里已存在，CREATE TABLE IF NOT EXISTS
+    # 不会改它们的 DEFAULT（仍是 CURRENT_TIMESTAMP=UTC），故保留 AFTER INSERT 触发器，把新写入
+    # 改成 datetime('now','localtime')（服务器本地时区）。DROP+CREATE 保证触发器体始终与代码一致。
+    for _tbl, _col in [
+        ('weekly_plans', 'submitted_at'), ('weekly_plan_items', 'created_at'),
+        ('daily_completions', 'submitted_at'), ('booking_slots', 'created_at'),
+        ('bookings', 'booked_at'), ('monthly_summaries', 'generated_at'),
+        ('okr_cycles', 'created_at'), ('okr_objectives', 'created_at'),
+        ('okr_key_results', 'created_at'), ('okr_kr_milestones', 'created_at'),
+    ]:
+        conn.execute("DROP TRIGGER IF EXISTS tg_{0}_{1}".format(_tbl, _col))
+        conn.execute(
+            "CREATE TRIGGER tg_{0}_{1} AFTER INSERT ON {0} "
+            "BEGIN UPDATE {0} SET {1}=datetime('now','localtime') WHERE rowid=new.rowid; END".format(_tbl, _col))
+
     conn.commit()
     conn.close()
