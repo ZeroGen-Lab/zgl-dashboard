@@ -18,6 +18,13 @@ def ensure_tables():
     # SQLite 的 UNIQUE 把 NULL 视为互异，故允许多个 NULL（未绑定的卡），非 NULL 登录名唯一
     conn.execute('''CREATE TABLE IF NOT EXISTS users
                     (uid TEXT PRIMARY KEY, name TEXT, loginname TEXT UNIQUE)''')
+
+    # 用户解绑后暂存旧卡 UID；该用户绑定新卡时，据此迁移所有按卡 UID 保存的数据。
+    conn.execute('''CREATE TABLE IF NOT EXISTS pending_card_transfers
+                    (loginname TEXT PRIMARY KEY,
+                     old_uid TEXT NOT NULL,
+                     name TEXT,
+                     created_at DATETIME DEFAULT (datetime('now','localtime')))''')
     
     conn.execute('''CREATE TABLE IF NOT EXISTS weekly_plans
                     (id INTEGER PRIMARY KEY AUTOINCREMENT,

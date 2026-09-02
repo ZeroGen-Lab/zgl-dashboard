@@ -9,6 +9,32 @@ from helpers import compute_month_range, generate_monthly_summary, is_instance_e
 dashboard_bp = Blueprint('dashboard', __name__)
 
 
+def _migrate_card_data(conn, old_uid, new_uid):
+    """把所有按卡 UID 保存的用户数据从旧卡迁移到新卡。"""
+    if old_uid == new_uid:
+        return
+
+    # 有唯一键的表发生冲突时以新卡记录为准，先移除旧卡上的同键记录。
+    conn.execute(
+        "DELETE FROM weekly_plans WHERE uid=? AND week_key IN "
+        "(SELECT week_key FROM weekly_plans WHERE uid=?)",
+        (old_uid, new_uid))
+    conn.execute(
+        "DELETE FROM daily_completions WHERE uid=? AND date IN "
+        "(SELECT date FROM daily_completions WHERE uid=?)",
+        (old_uid, new_uid))
+    conn.execute(
+        "DELETE FROM monthly_summaries WHERE uid=? AND month_key IN "
+        "(SELECT month_key FROM monthly_summaries WHERE uid=?)",
+        (old_uid, new_uid))
+
+    for table in (
+        'sign_ins', 'weekly_plans', 'weekly_plan_items',
+        'daily_completions', 'monthly_summaries', 'llm_calls',
+    ):
+        conn.execute(f"UPDATE {table} SET uid=? WHERE uid=?", (new_uid, old_uid))
+
+
 @dashboard_bp.route('/')
 @login_required
 def index():
@@ -63,7 +89,7 @@ def index():
 @dashboard_bp.route('/bind', methods=['POST'])
 @login_required
 def bind():
-    """绑定/更新一张卡：必须同时指定 loginname（未绑定的）和姓名。"""
+    """绑定一张未绑定的卡：必须同时指定未绑定的 loginname 和姓名。"""
     uid = (request.form.get('uid') or '').strip()
     name = (request.form.get('name') or '').strip()
     loginname = (request.form.get('loginname') or '').strip()
@@ -82,6 +108,14 @@ def bind():
         return redirect(url_for('dashboard.index'))
 
     conn = get_db_connection()
+    card = conn.execute(
+        "SELECT loginname FROM users WHERE uid=?", (uid,)
+    ).fetchone()
+    if card and card['loginname']:
+        flash('该卡片已经绑定，请先解绑。')
+        conn.close()
+        return redirect(url_for('dashboard.index'))
+
     # 1:1：loginname 不能已绑到别的 uid（UNIQUE 约束兜底，这里给友好提示）
     owner = conn.execute("SELECT uid FROM users WHERE loginname=?", (loginname,)).fetchone()
     if owner and owner['uid'] != uid:
@@ -90,6 +124,9 @@ def bind():
         return redirect(url_for('dashboard.index'))
 
     try:
+        transfer = conn.execute(
+            "SELECT old_uid FROM pending_card_transfers WHERE loginname=?",
+            (loginname,)).fetchone()
         row = conn.execute("SELECT uid FROM users WHERE uid=?", (uid,)).fetchone()
         if row:
             conn.execute("UPDATE users SET name=?, loginname=? WHERE uid=?",
@@ -97,13 +134,50 @@ def bind():
         else:
             conn.execute("INSERT INTO users (uid, name, loginname) VALUES (?, ?, ?)",
                          (uid, name, loginname))
+        if transfer:
+            _migrate_card_data(conn, transfer['old_uid'], uid)
+            conn.execute(
+                "DELETE FROM pending_card_transfers WHERE loginname=?", (loginname,))
         conn.commit()
-        flash('绑定成功。')
+        if transfer and transfer['old_uid'] != uid:
+            flash(f'绑定成功，用户数据已从旧卡 {transfer["old_uid"]} 迁移到新卡 {uid}。')
+        else:
+            flash('绑定成功。')
     except sqlite3.IntegrityError:
         # 并发或被抢先绑定导致 loginname 唯一冲突
         flash('绑定失败：该登录名可能已被他人抢先绑定。')
     finally:
         conn.close()
+    return redirect(url_for('dashboard.index'))
+
+
+@dashboard_bp.route('/unbind', methods=['POST'])
+@login_required
+def unbind():
+    """解除卡片绑定，并记录旧 UID，供该用户下次绑定时迁移数据。"""
+    uid = (request.form.get('uid') or '').strip()
+    if not uid:
+        flash('缺少卡片 UID。')
+        return redirect(url_for('dashboard.index'))
+
+    conn = get_db_connection()
+    row = conn.execute(
+        "SELECT name, loginname FROM users WHERE uid=?", (uid,)
+    ).fetchone()
+    if not row or not row['loginname']:
+        flash('该卡片当前未绑定。')
+    else:
+        conn.execute(
+            "INSERT INTO pending_card_transfers(loginname, old_uid, name) VALUES (?, ?, ?) "
+            "ON CONFLICT(loginname) DO UPDATE SET old_uid=excluded.old_uid, "
+            "name=excluded.name, created_at=datetime('now','localtime')",
+            (row['loginname'], uid, row['name']))
+        conn.execute(
+            "UPDATE users SET name=NULL, loginname=NULL WHERE uid=?", (uid,)
+        )
+        conn.commit()
+        flash('解绑成功；该用户绑定新卡时，全部用户数据将自动迁移。')
+    conn.close()
     return redirect(url_for('dashboard.index'))
 
 

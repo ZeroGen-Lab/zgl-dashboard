@@ -46,7 +46,7 @@
     <h4 class="mb-4">团队成员</h4>
     <table class="table table-hover align-middle text-center">
         <thead class="table-light">
-            <tr><th>UID</th><th>姓名</th><th>最后签到</th><th>绑定/更新</th></tr>
+            <tr><th>UID</th><th>姓名</th><th>最后签到</th><th>绑定操作</th></tr>
         </thead>
         <tbody>
             {% for r in records %}
@@ -61,11 +61,20 @@
                 </td>
                 <td>{{r.last_time}}</td>
                 <td>
+                    {% if r.loginname %}
+                    <form method="POST" action="/unbind" class="d-inline"
+                          onsubmit="return confirm('确定解除卡片 {{ r.uid }} 与用户 {{ r.loginname }} 的绑定吗？该用户绑定新卡时，全部用户数据将自动迁移。');">
+                        <input type="hidden" name="uid" value="{{ r.uid }}">
+                        <button type="submit" class="btn btn-sm btn-outline-danger">
+                            <i class="bi bi-person-x"></i> 解绑
+                        </button>
+                    </form>
+                    {% else %}
                     <button type="button" class="btn btn-sm btn-outline-secondary open-bind"
-                            data-uid="{{ r.uid }}" data-loginname="{{ r.loginname or '' }}" data-name="{{ r.name or '' }}">
-                        <i class="bi {% if r.loginname %}bi-pencil{% else %}bi-plus-circle{% endif %}"></i>
-                        {% if r.loginname %}更新{% else %}绑定{% endif %}
+                            data-uid="{{ r.uid }}">
+                        <i class="bi bi-plus-circle"></i> 绑定
                     </button>
+                    {% endif %}
                 </td>
             </tr>
             {% endfor %}
@@ -73,13 +82,13 @@
     </table>
 </div>
 
-<!-- 绑定/更新弹窗：登录名 + 姓名 一次确定 -->
+<!-- 绑定弹窗：登录名 + 姓名一次确定 -->
 <div class="modal fade" id="bindModal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content">
             <form id="bindForm" method="POST" action="/bind">
                 <div class="modal-header">
-                    <h6 class="modal-title"><i class="bi bi-person-badge"></i> 绑定 / 更新卡片</h6>
+                    <h6 class="modal-title"><i class="bi bi-person-badge"></i> 绑定卡片</h6>
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
                 <div class="modal-body">
@@ -113,25 +122,16 @@ document.addEventListener('DOMContentLoaded', function() {
     _bindModal = new bootstrap.Modal(document.getElementById('bindModal'));
     document.querySelectorAll('button.open-bind').forEach(function(btn) {
         btn.addEventListener('click', function() {
-            openBind(this.dataset.uid, this.dataset.loginname, this.dataset.name);
+            openBind(this.dataset.uid);
         });
     });
 });
 
-function openBind(uid, loginname, name) {
+function openBind(uid) {
     document.getElementById('bindUid').value = uid;
-    document.getElementById('bindName').value = name || '';
+    document.getElementById('bindName').value = '';
     var sel = document.getElementById('bindLoginname');
-    // 清掉上次注入的"当前登录名"选项
-    var prev = sel.querySelector('option[data-cur="1"]'); if (prev) prev.remove();
-    var cur = (loginname || '').trim();
-    if (cur && !sel.querySelector('option[value="' + cur + '"]')) {
-        // 当前登录名已绑定（不在可选列表里），补一个选项以便显示/保留
-        var opt = document.createElement('option');
-        opt.value = cur; opt.textContent = cur + ' (当前)'; opt.setAttribute('data-cur', '1');
-        sel.appendChild(opt);
-    }
-    sel.value = cur;  // cur 为空则选中占位项
+    sel.value = '';
     _bindModal.show();
 }
 </script>
