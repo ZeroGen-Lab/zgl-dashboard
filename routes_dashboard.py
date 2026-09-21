@@ -1,38 +1,12 @@
 import sqlite3
 import uuid
-from flask import Blueprint, render_template, request, redirect, url_for, flash, session
+from flask import Blueprint, render_template, request, redirect, url_for, flash, session, abort
 from datetime import datetime, timedelta
 from db import get_db_connection
-from auth import login_required, VALID_USERS
-from helpers import compute_month_range, generate_monthly_summary, is_instance_expired, compute_week_key, save_weekly_plan, save_daily_completion, current_completion_date, uid_for_user
+from auth import login_required, VALID_USERS, is_admin
+from helpers import compute_month_range, generate_monthly_summary, is_instance_expired, compute_week_key, save_weekly_plan, save_daily_completion, current_completion_date
 
 dashboard_bp = Blueprint('dashboard', __name__)
-
-
-def _migrate_card_data(conn, old_uid, new_uid):
-    """把所有按卡 UID 保存的用户数据从旧卡迁移到新卡。"""
-    if old_uid == new_uid:
-        return
-
-    # 有唯一键的表发生冲突时以新卡记录为准，先移除旧卡上的同键记录。
-    conn.execute(
-        "DELETE FROM weekly_plans WHERE uid=? AND week_key IN "
-        "(SELECT week_key FROM weekly_plans WHERE uid=?)",
-        (old_uid, new_uid))
-    conn.execute(
-        "DELETE FROM daily_completions WHERE uid=? AND date IN "
-        "(SELECT date FROM daily_completions WHERE uid=?)",
-        (old_uid, new_uid))
-    conn.execute(
-        "DELETE FROM monthly_summaries WHERE uid=? AND month_key IN "
-        "(SELECT month_key FROM monthly_summaries WHERE uid=?)",
-        (old_uid, new_uid))
-
-    for table in (
-        'sign_ins', 'weekly_plans', 'weekly_plan_items',
-        'daily_completions', 'monthly_summaries', 'llm_calls',
-    ):
-        conn.execute(f"UPDATE {table} SET uid=? WHERE uid=?", (new_uid, old_uid))
 
 
 @dashboard_bp.route('/')
@@ -40,28 +14,41 @@ def _migrate_card_data(conn, old_uid, new_uid):
 def index():
     conn = get_db_connection()
 
-    # delete sign-ins by unknown users (after 3 days) to keep the table clean
+    # 清理超过三天的未知卡签到，已确认人员归属的历史记录始终保留。
     cutoff = (datetime.now() - timedelta(days=3)).strftime('%Y-%m-%d %H:%M:%S')
-    conn.execute(
-        'DELETE FROM sign_ins WHERE uid NOT IN (SELECT uid FROM users) AND timestamp < ?',
-        (cutoff,)
-    )
-    conn.commit()
+    with conn:
+        conn.execute('''
+            DELETE FROM sign_ins
+            WHERE loginname IS NULL AND timestamp < ?
+              AND NOT EXISTS (
+                  SELECT 1 FROM user_cards c WHERE c.uid = sign_ins.card_uid
+              )
+        ''', (cutoff,))
 
-    sql = '''
-        SELECT s.uid, MAX(s.timestamp) as last_time, u.name, u.loginname
+    # 人员按账号展示；即使删除全部卡片也保留该用户和历史签到。
+    members = [dict(row) for row in conn.execute('''
+        SELECT u.loginname, u.name, MAX(s.timestamp) AS last_time
+        FROM users u LEFT JOIN sign_ins s ON s.loginname = u.loginname
+        GROUP BY u.loginname, u.name
+        ORDER BY last_time DESC, u.loginname
+    ''').fetchall()]
+    cards_by_user = {}
+    # UID 用于展示，内部记录 ID 用于删除指定绑定。
+    for row in conn.execute('SELECT id, uid, loginname FROM user_cards ORDER BY id'):
+        cards_by_user.setdefault(row['loginname'], []).append(dict(row))
+    for member in members:
+        member['cards'] = cards_by_user.get(member['loginname'], [])
+        member['can_manage_cards'] = member['loginname'] == session['user'] or is_admin()
+
+    # 这里只读展示，不因删除卡片关系就清理其历史签到记录。
+    unbound_cards = conn.execute('''
+        SELECT s.card_uid AS uid, MAX(s.timestamp) AS last_time
         FROM sign_ins s
-        LEFT JOIN users u ON s.uid = u.uid
-        WHERE s.timestamp >= date('now','-180 days')
-        GROUP BY s.uid
-        ORDER BY last_time DESC
-    '''
-    records = conn.execute(sql).fetchall()
-
-    # 可选登录名 = .users.txt(VALID_USERS) 中尚未绑定到任何卡片的（保证 1:1）
-    bound_loginnames = {row['loginname'] for row in conn.execute(
-        "SELECT loginname FROM users WHERE loginname IS NOT NULL").fetchall()}
-    available_loginnames = sorted(VALID_USERS - bound_loginnames)
+        WHERE s.card_uid IS NOT NULL AND s.card_uid != ''
+          AND s.timestamp >= date('now','-180 days')
+          AND NOT EXISTS (SELECT 1 FROM user_cards c WHERE c.uid = s.card_uid)
+        GROUP BY s.card_uid ORDER BY last_time DESC
+    ''').fetchall()
 
     # 一次性预约轮播数据
     today_str = datetime.now().strftime('%Y-%m-%d')
@@ -81,103 +68,67 @@ def index():
         carousel_data.append(dict(slot=dict(slot), remaining=slot['capacity'] - booked_count))
 
     conn.close()
-    return render_template('index.html', page='index', records=records,
-                           carousel_data=carousel_data,
-                           available_loginnames=available_loginnames)
+    return render_template('index.html', page='index', members=members,
+                           unbound_cards=unbound_cards,
+                           carousel_data=carousel_data)
 
 
 @dashboard_bp.route('/bind', methods=['POST'])
 @login_required
 def bind():
-    """绑定一张未绑定的卡：必须同时指定未绑定的 loginname 和姓名。"""
+    """将未绑定的卡绑定到当前登录账号，支持一人多卡。"""
     uid = (request.form.get('uid') or '').strip()
-    name = (request.form.get('name') or '').strip()
-    loginname = (request.form.get('loginname') or '').strip()
+    loginname = session['user']
 
     if not uid:
         flash('缺少卡片 UID。')
         return redirect(url_for('dashboard.index'))
-    if not loginname:
-        flash('请选择登录名。')
-        return redirect(url_for('dashboard.index'))
-    if not name:
-        flash('请输入姓名。')
-        return redirect(url_for('dashboard.index'))
     if loginname not in VALID_USERS:
-        flash('未知登录名，请从下拉列表选择。')
+        flash('当前登录账号无效，请重新登录。')
         return redirect(url_for('dashboard.index'))
 
     conn = get_db_connection()
-    card = conn.execute(
-        "SELECT loginname FROM users WHERE uid=?", (uid,)
-    ).fetchone()
-    if card and card['loginname']:
-        flash('该卡片已经绑定，请先解绑。')
-        conn.close()
-        return redirect(url_for('dashboard.index'))
-
-    # 1:1：loginname 不能已绑到别的 uid（UNIQUE 约束兜底，这里给友好提示）
-    owner = conn.execute("SELECT uid FROM users WHERE loginname=?", (loginname,)).fetchone()
-    if owner and owner['uid'] != uid:
-        flash(f'登录名 {loginname} 已绑定到其他卡片，请换一个。')
-        conn.close()
-        return redirect(url_for('dashboard.index'))
-
     try:
-        transfer = conn.execute(
-            "SELECT old_uid FROM pending_card_transfers WHERE loginname=?",
-            (loginname,)).fetchone()
-        row = conn.execute("SELECT uid FROM users WHERE uid=?", (uid,)).fetchone()
-        if row:
-            conn.execute("UPDATE users SET name=?, loginname=? WHERE uid=?",
-                         (name, loginname, uid))
-        else:
-            conn.execute("INSERT INTO users (uid, name, loginname) VALUES (?, ?, ?)",
-                         (uid, name, loginname))
-        if transfer:
-            _migrate_card_data(conn, transfer['old_uid'], uid)
-            conn.execute(
-                "DELETE FROM pending_card_transfers WHERE loginname=?", (loginname,))
+        # 账号创建和卡片占用检查处于同一写事务，防止并发抢绑。
+        conn.execute('BEGIN IMMEDIATE')
+        if conn.execute('SELECT id FROM user_cards WHERE uid=?', (uid,)).fetchone():
+            flash('该卡片已经绑定，请先删除原卡片关系。')
+            return redirect(url_for('dashboard.index'))
+        user = conn.execute(
+            'SELECT loginname FROM users WHERE loginname=?', (loginname,)).fetchone()
+        if not user:
+            conn.execute('INSERT INTO users(loginname, name) VALUES (?, ?)', (loginname, loginname))
+        # 已有用户沿用原资料，不因新增卡片覆盖姓名。
+        conn.execute('INSERT INTO user_cards(uid, loginname) VALUES (?, ?)', (uid, loginname))
         conn.commit()
-        if transfer and transfer['old_uid'] != uid:
-            flash(f'绑定成功，用户数据已从旧卡 {transfer["old_uid"]} 迁移到新卡 {uid}。')
-        else:
-            flash('绑定成功。')
+        flash('绑定成功。')
     except sqlite3.IntegrityError:
-        # 并发或被抢先绑定导致 loginname 唯一冲突
-        flash('绑定失败：该登录名可能已被他人抢先绑定。')
+        conn.rollback()
+        flash('绑定失败：该卡片可能已被绑定，请刷新后重试。')
     finally:
         conn.close()
     return redirect(url_for('dashboard.index'))
 
 
-@dashboard_bp.route('/unbind', methods=['POST'])
+@dashboard_bp.route('/delete_card', methods=['POST'])
 @login_required
-def unbind():
-    """解除卡片绑定，并记录旧 UID，供该用户下次绑定时迁移数据。"""
-    uid = (request.form.get('uid') or '').strip()
-    if not uid:
-        flash('缺少卡片 UID。')
+def delete_card():
+    """只删除指定卡片关系，账号及历史数据保留。"""
+    binding_id = request.form.get('binding_id', type=int)
+    if binding_id is None or binding_id <= 0:
+        flash('缺少有效的卡片绑定编号。')
         return redirect(url_for('dashboard.index'))
 
     conn = get_db_connection()
-    row = conn.execute(
-        "SELECT name, loginname FROM users WHERE uid=?", (uid,)
-    ).fetchone()
-    if not row or not row['loginname']:
-        flash('该卡片当前未绑定。')
-    else:
-        conn.execute(
-            "INSERT INTO pending_card_transfers(loginname, old_uid, name) VALUES (?, ?, ?) "
-            "ON CONFLICT(loginname) DO UPDATE SET old_uid=excluded.old_uid, "
-            "name=excluded.name, created_at=datetime('now','localtime')",
-            (row['loginname'], uid, row['name']))
-        conn.execute(
-            "UPDATE users SET name=NULL, loginname=NULL WHERE uid=?", (uid,)
-        )
-        conn.commit()
-        flash('解绑成功；该用户绑定新卡时，全部用户数据将自动迁移。')
-    conn.close()
+    try:
+        card = conn.execute('SELECT loginname FROM user_cards WHERE id=?', (binding_id,)).fetchone()
+        if card and card['loginname'] != session['user'] and not is_admin():
+            abort(403)
+        with conn:
+            result = conn.execute('DELETE FROM user_cards WHERE id=?', (binding_id,))
+        flash('卡片已删除，账号和历史数据已保留。' if result.rowcount else '该卡片已删除或不存在。')
+    finally:
+        conn.close()
     return redirect(url_for('dashboard.index'))
 
 
@@ -192,24 +143,24 @@ def stats():
     last_day_last_month = first_day_this_month - timedelta(days=1)
     last_month_label = f"{last_day_last_month.strftime('%Y%m')}"
 
-    # 1次查询：所有用户在180天内的 stats（JOIN users 表，GROUP BY uid）
+    # 1次查询：所有用户在180天内的 stats（JOIN users 表，GROUP BY loginname）
     stats_query = '''
         SELECT
-            s.uid,
-            COALESCE(u.name, '未绑定') as name,
+            s.loginname,
+            COALESCE(NULLIF(u.name, ''), u.loginname) as name,
             COUNT(DISTINCT CASE WHEN s.timestamp >= date('now','-15 days') THEN date(s.timestamp) END) as d15,
             COUNT(DISTINCT CASE WHEN s.timestamp >= date('now','-60 days') THEN date(s.timestamp) END) as d60,
             COUNT(DISTINCT CASE WHEN s.timestamp >= date('now','-180 days') THEN date(s.timestamp) END) as d180,
-            COUNT(DISTINCT CASE WHEN strftime('%Y-%m',s.timestamp) = strftime('%Y-%m','now','-1 month') THEN date(s.timestamp) END) as last_month
+            COUNT(DISTINCT CASE WHEN strftime('%Y-%m',s.timestamp) = strftime('%Y-%m','now','start of month','-1 month') THEN date(s.timestamp) END) as last_month
         FROM sign_ins s
-        LEFT JOIN users u ON s.uid = u.uid
+        JOIN users u ON s.loginname = u.loginname
         WHERE s.timestamp >= date('now','-180 days')
-        GROUP BY s.uid
+        GROUP BY s.loginname
         ORDER BY d15 DESC
     '''
     stats_list = [dict(row) for row in conn.execute(stats_query).fetchall()]
 
-    # 1次查询：全员56天热力图数据（GROUP BY uid）
+    # 1次查询：全员56天热力图数据（GROUP BY loginname）
     heatmap_dates = []
     today_date = datetime.now().date()
     for i in range(55, -1, -1):
@@ -217,38 +168,38 @@ def stats():
         heatmap_dates.append(d.strftime('%m/%d'))
 
     heatmap_query = '''
-        SELECT uid, date(timestamp) as day
+        SELECT loginname, date(timestamp) as day
         FROM sign_ins
-        WHERE timestamp >= date('now','-56 days')
-        GROUP BY uid, day
+        WHERE loginname IS NOT NULL AND timestamp >= date('now','-56 days')
+        GROUP BY loginname, day
     '''
     heatmap_rows = conn.execute(heatmap_query).fetchall()
-    # 按 uid 分组
-    heatmap_by_uid = {}
+    # 按 loginname 分组
+    heatmap_by_loginname = {}
     for row in heatmap_rows:
-        heatmap_by_uid.setdefault(row['uid'], set()).add(row['day'])
+        heatmap_by_loginname.setdefault(row['loginname'], set()).add(row['day'])
 
     heatmap_data = []
     for s in stats_list:
-        uid = s['uid']
-        name = s['name'] if s['name'] != '未绑定' else uid
-        days_set = heatmap_by_uid.get(uid, set())
+        loginname = s['loginname']
+        name = s['name']
+        days_set = heatmap_by_loginname.get(loginname, set())
         day_flags = []
         for i in range(55, -1, -1):
             d = (today_date - timedelta(days=i)).strftime('%Y-%m-%d')
             day_flags.append(d in days_set)
-        heatmap_data.append((uid, name, day_flags))
+        heatmap_data.append((loginname, name, day_flags))
 
     # 柱状图数据：各成员近30天 Onsite 天数
     bar_labels = []
     bar_values = []
     for s in stats_list:
-        uid = s['uid']
+        loginname = s['loginname']
         count_30 = conn.execute(
-            "SELECT COUNT(DISTINCT date(timestamp)) FROM sign_ins WHERE uid=? AND timestamp >= date('now','-30 days')",
-            (uid,)
+            "SELECT COUNT(DISTINCT date(timestamp)) FROM sign_ins WHERE loginname=? AND timestamp >= date('now','-30 days')",
+            (loginname,)
         ).fetchone()[0]
-        bar_labels.append(s['name'] if s['name'] != '未绑定' else f"{s['uid']}")
+        bar_labels.append(s['name'])
         bar_values.append(count_30)
 
     conn.close()
@@ -257,16 +208,19 @@ def stats():
                            stats=stats_list, last_month_label=last_month_label,
                            bar_labels=bar_labels, bar_data=bar_values,
                            heatmap_data=heatmap_data, heatmap_dates=heatmap_dates,
-                           uid_count=len(stats_list))
+                           member_count=len(stats_list))
 
 
-@dashboard_bp.route('/detail/<uid>')
+@dashboard_bp.route('/detail/<loginname>')
 @login_required
-def detail(uid):
+def detail(loginname):
     """三周上下文：上周(完成情况) / 本周(计划+日报+AI) / 下周(待生效计划)。"""
     conn = get_db_connection()
-    user = conn.execute("SELECT name FROM users WHERE uid=?", (uid,)).fetchone()
-    name = user['name'] if user else "未绑定"
+    user = conn.execute("SELECT name FROM users WHERE loginname=?", (loginname,)).fetchone()
+    if not user:
+        conn.close()
+        abort(404)
+    name = user['name'] or loginname
 
     now = datetime.now()
     today = now.date()
@@ -284,13 +238,13 @@ def detail(uid):
     items_by_key = {}
     for r in conn.execute(
         "SELECT week_key, item_order, text, status FROM weekly_plan_items "
-        "WHERE uid=? AND week_key IN (?, ?, ?) ORDER BY week_key, item_order",
-        (uid, last_key, this_key, next_key)
+        "WHERE loginname=? AND week_key IN (?, ?, ?) ORDER BY week_key, item_order",
+        (loginname, last_key, this_key, next_key)
     ).fetchall():
         items_by_key.setdefault(r['week_key'], []).append({'text': r['text'], 'status': r['status']})
     legacy_by_key = {r['week_key']: r['content'] for r in conn.execute(
-        "SELECT week_key, content FROM weekly_plans WHERE uid=? AND week_key IN (?, ?, ?)",
-        (uid, last_key, this_key, next_key)).fetchall()}
+        "SELECT week_key, content FROM weekly_plans WHERE loginname=? AND week_key IN (?, ?, ?)",
+        (loginname, last_key, this_key, next_key)).fetchall()}
 
     def build(m, key):
         it = items_by_key.get(key, [])
@@ -305,7 +259,7 @@ def detail(uid):
     this_week = build(current_monday, this_key)
 
     # 本周签到 / 日报 -> 7 天格子（也用于上周的只读展示）
-    is_owner = (uid == uid_for_user(session['user']))
+    is_owner = (loginname == session['user'])
     editable_date_str = current_completion_date()
     weekdays = ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
 
@@ -313,11 +267,11 @@ def detail(uid):
         ws = monday.strftime('%Y-%m-%d')
         we = (monday + timedelta(weeks=1)).strftime('%Y-%m-%d')
         sign = set(r['day'] for r in conn.execute(
-            "SELECT DISTINCT date(timestamp) as day FROM sign_ins WHERE uid=? AND timestamp >= ? AND timestamp < ?",
-            (uid, ws, we)).fetchall())
+            "SELECT DISTINCT date(timestamp) as day FROM sign_ins WHERE loginname=? AND timestamp >= ? AND timestamp < ?",
+            (loginname, ws, we)).fetchall())
         comp = {r['date']: {'review': r['review'], 'todo': r['todo']} for r in conn.execute(
-            "SELECT date, review, todo FROM daily_completions WHERE uid=? AND date >= ? AND date < ?",
-            (uid, ws, we)).fetchall()}
+            "SELECT date, review, todo FROM daily_completions WHERE loginname=? AND date >= ? AND date < ?",
+            (loginname, ws, we)).fetchall()}
         out = []
         for d in range(7):
             dd = monday + timedelta(days=d)
@@ -337,11 +291,11 @@ def detail(uid):
     next_week['can_edit'] = bool(is_owner and editable_week_key and next_key == editable_week_key)
 
     recent_checkins = [r['timestamp'] for r in conn.execute(
-        "SELECT timestamp FROM sign_ins WHERE uid=? ORDER BY timestamp DESC LIMIT 30", (uid,)).fetchall()]
+        "SELECT timestamp FROM sign_ins WHERE loginname=? ORDER BY timestamp DESC LIMIT 30", (loginname,)).fetchall()]
 
     conn.close()
     return render_template('detail.html', page='detail',
-                           uid=uid, name=name, is_owner=is_owner,
+                           loginname=loginname, name=name, is_owner=is_owner,
                            last_week=last_week, this_week=this_week, next_week=next_week,
                            in_window=editable_week_key is not None,
                            recent_checkins=recent_checkins)
@@ -351,46 +305,46 @@ def detail(uid):
 @login_required
 def weekly_plan_save():
     """Web 保存一周计划：仅 owner、仅提交窗口内（保存到可提交那周）。"""
-    uid = (request.form.get('uid') or '').strip()
+    loginname = (request.form.get('loginname') or '').strip()
     items = request.form.getlist('item')
 
-    if not uid or uid != uid_for_user(session['user']):
+    if not loginname or loginname != session['user']:
         flash('只能编辑自己的周计划。')
-        return redirect(url_for('dashboard.detail', uid=uid))
+        return redirect(url_for('dashboard.index'))
 
     editable_week_key = compute_week_key(datetime.now())
     if not editable_week_key:
         flash('当前不在提交窗口内（周六至周一18点）。')
-        return redirect(url_for('dashboard.detail', uid=uid))
+        return redirect(url_for('dashboard.detail', loginname=loginname))
 
     try:
-        save_weekly_plan(uid, editable_week_key, items)
+        save_weekly_plan(loginname, editable_week_key, items)
     except ValueError as e:
         flash(str(e))
     else:
         flash('周计划已保存。')
-    return redirect(url_for('dashboard.detail', uid=uid))
+    return redirect(url_for('dashboard.detail', loginname=loginname))
 
 
 @dashboard_bp.route('/daily_completion', methods=['POST'])
 @login_required
 def daily_completion_save():
     """Web 编辑当天日报：仅 owner、仅当天（now-6h 归属日），多次编辑只保留最新。"""
-    uid = (request.form.get('uid') or '').strip()
+    loginname = (request.form.get('loginname') or '').strip()
     review = request.form.get('review') or ''
     todo = request.form.get('todo') or ''
 
-    if not uid or uid != uid_for_user(session['user']):
+    if not loginname or loginname != session['user']:
         flash('只能编辑自己的daily completion。')
-        return redirect(url_for('dashboard.detail', uid=uid))
+        return redirect(url_for('dashboard.index'))
 
     try:
-        save_daily_completion(uid, review, todo)
+        save_daily_completion(loginname, review, todo)
     except ValueError as e:
         flash(str(e))
     else:
         flash('Daily completion已保存。')
-    return redirect(url_for('dashboard.detail', uid=uid))
+    return redirect(url_for('dashboard.detail', loginname=loginname))
 
 
 @dashboard_bp.route('/monthly_summary')
@@ -407,13 +361,13 @@ def monthly_summary():
                            month_key=month_key, month_offset=offset)
 
 
-@dashboard_bp.route('/monthly_summary/generate_summary/<uid>', methods=['POST'])
+@dashboard_bp.route('/monthly_summary/generate_summary/<loginname>', methods=['POST'])
 @login_required
-def generate_summary(uid):
-    offset = request.form.get('month_offset', 0, type=int)
+def generate_summary(loginname):
+    offset = max(0, request.form.get('month_offset', 0, type=int))
     _, _, month_key = compute_month_range(offset)
     summary_list = generate_monthly_summary(offset)
-    member = next((s for s in summary_list if s['uid'] == uid), None)
+    member = next((s for s in summary_list if s['loginname'] == loginname), None)
     if not member:
         flash('成员不存在或该月无活动')
         return redirect(url_for('dashboard.monthly_summary', month_offset=offset))
@@ -422,7 +376,7 @@ def generate_summary(uid):
         return redirect(url_for('dashboard.monthly_summary', month_offset=offset))
     from llm import generate_daily_summary
     session_id = uuid.uuid4().hex
-    result = generate_daily_summary(uid, member['name'], member['daily_completions_text'], session_id=session_id)
+    result = generate_daily_summary(loginname, member['name'], member['daily_completions_text'], session_id=session_id, month_key=month_key)
     if result:
         flash(f'{member["name"]} 的月度摘要已生成')
     else:
@@ -430,13 +384,13 @@ def generate_summary(uid):
     return redirect(url_for('dashboard.monthly_summary', month_offset=offset))
 
 
-@dashboard_bp.route('/monthly_summary/generate_suggestion/<uid>', methods=['POST'])
+@dashboard_bp.route('/monthly_summary/generate_suggestion/<loginname>', methods=['POST'])
 @login_required
-def generate_suggestion(uid):
-    offset = request.form.get('month_offset', 0, type=int)
+def generate_suggestion(loginname):
+    offset = max(0, request.form.get('month_offset', 0, type=int))
     _, _, month_key = compute_month_range(offset)
     summary_list = generate_monthly_summary(offset)
-    member = next((s for s in summary_list if s['uid'] == uid), None)
+    member = next((s for s in summary_list if s['loginname'] == loginname), None)
     if not member:
         flash('成员不存在或该月无活动')
         return redirect(url_for('dashboard.monthly_summary', month_offset=offset))
@@ -445,7 +399,7 @@ def generate_suggestion(uid):
         return redirect(url_for('dashboard.monthly_summary', month_offset=offset))
     from llm import generate_work_suggestion
     session_id = uuid.uuid4().hex
-    result = generate_work_suggestion(uid, member['name'], member['daily_completions_text'], member['weekly_plans_text'], session_id=session_id)
+    result = generate_work_suggestion(loginname, member['name'], member['daily_completions_text'], member['weekly_plans_text'], session_id=session_id, month_key=month_key)
     if result:
         flash(f'{member["name"]} 的工作建议已生成')
     else:

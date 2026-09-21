@@ -257,7 +257,7 @@ def kr_add():
     cycle_key = request.form.get('cycle_key', '').strip()
     title = request.form.get('title', '').strip()
     description = request.form.get('description', '').strip()
-    uid = request.form.get('uid', session['user']).strip()
+    loginname = session['user']
     if not title:
         flash('Key result title cannot be empty.')
         return redirect(url_for('okr.okr_page', cycle=cycle_key))
@@ -272,9 +272,13 @@ def kr_add():
         flash('This objective cannot have key results added (must be in planning cycle and the objective must be approved).')
         conn.close()
         return redirect(url_for('okr.okr_page', cycle=cycle_key))
+    # 允许已登录但尚未绑卡的成员创建自己的 KR。
     conn.execute(
-        "INSERT INTO okr_key_results (objective_id, uid, title, description) VALUES (?, ?, ?, ?)",
-        (objective_id, uid, title, description)
+        "INSERT INTO users(loginname, name) VALUES (?, ?) ON CONFLICT(loginname) DO NOTHING",
+        (loginname, loginname))
+    conn.execute(
+        "INSERT INTO okr_key_results (objective_id, loginname, title, description) VALUES (?, ?, ?, ?)",
+        (objective_id, loginname, title, description)
     )
     conn.commit()
     conn.close()
@@ -296,14 +300,20 @@ def kr_update_progress(kr_id):
         return redirect(url_for('okr.okr_page', cycle=cycle_key))
     conn = get_db_connection()
     kr = conn.execute(
-        "SELECT uid FROM okr_key_results WHERE id=?", (kr_id,)
+        "SELECT k.loginname, c.status AS cycle_status FROM okr_key_results k "
+        "JOIN okr_objectives o ON k.objective_id=o.id "
+        "JOIN okr_cycles c ON o.cycle_id=c.id WHERE k.id=?", (kr_id,)
     ).fetchone()
     if not kr:
         flash('Key result does not exist.')
         conn.close()
         return redirect(url_for('okr.okr_page', cycle=cycle_key))
-    if kr['uid'] != session['user']:
+    if kr['loginname'] != session['user']:
         flash('You can only update progress for key results you are responsible for.')
+        conn.close()
+        return redirect(url_for('okr.okr_page', cycle=cycle_key))
+    if kr['cycle_status'] not in ('planning', 'active'):
+        flash('Progress can only be updated in planning or active cycles.')
         conn.close()
         return redirect(url_for('okr.okr_page', cycle=cycle_key))
     conn.execute(
@@ -344,7 +354,7 @@ def kr_edit(kr_id):
         flash('Free edit is only allowed in planning phase. Use Request Edit in active phase.')
         conn.close()
         return redirect(url_for('okr.okr_page', cycle=cycle_key))
-    if kr['uid'] != session['user']:
+    if kr['loginname'] != session['user']:
         flash('You can only edit key results you are responsible for.')
         conn.close()
         return redirect(url_for('okr.okr_page', cycle=cycle_key))
@@ -372,13 +382,13 @@ def kr_add_milestone(kr_id):
         return redirect(url_for('okr.okr_page', cycle=cycle_key))
     conn = get_db_connection()
     kr = conn.execute(
-        "SELECT uid FROM okr_key_results WHERE id=?", (kr_id,)
+        "SELECT loginname FROM okr_key_results WHERE id=?", (kr_id,)
     ).fetchone()
     if not kr:
         flash('Key result does not exist.')
         conn.close()
         return redirect(url_for('okr.okr_page', cycle=cycle_key))
-    if kr['uid'] != session['user']:
+    if kr['loginname'] != session['user']:
         flash('You can only add milestones to key results you are responsible for.')
         conn.close()
         return redirect(url_for('okr.okr_page', cycle=cycle_key))
@@ -425,7 +435,7 @@ def kr_request_edit(kr_id):
         flash('This key result already has a pending edit request.')
         conn.close()
         return redirect(url_for('okr.okr_page', cycle=cycle_key))
-    if kr['uid'] != session['user']:
+    if kr['loginname'] != session['user']:
         flash('You can only request edits for key results you are responsible for.')
         conn.close()
         return redirect(url_for('okr.okr_page', cycle=cycle_key))

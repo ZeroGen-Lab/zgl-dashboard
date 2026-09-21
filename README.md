@@ -94,20 +94,25 @@ SQLite（`attendance.db`），首次启动自动创建：
 
 | 表 | 说明 |
 |---|------|
-| sign_ins | 签到记录（id, uid, timestamp） |
-| users | UID-姓名绑定（uid, name） |
-| weekly_plans | 每周计划（uid, week_key, content） |
-| daily_completions | 每日完成情况（uid, date, content） |
+| sign_ins | 签到记录（id, loginname, card_uid, timestamp）；未知卡的 loginname 为空 |
+| users | 成员账号与姓名（loginname 主键, name） |
+| user_cards | 卡片绑定（id, uid 唯一, loginname）；支持一人多卡 |
+| weekly_plans | 每周计划（loginname, week_key, content），每账号每周唯一 |
+| daily_completions | 日报（loginname, date, review, todo），每账号每天唯一 |
+| monthly_summaries | AI 月度摘要与建议（loginname, month_key） |
+| okr_key_results | 关键结果，负责人使用 loginname |
 | booking_slots | 预约时段（publisher, slot_type, title, start/end_hour, capacity）。start/end_hour 为浮点小时（`6.5`=6:30），范围 6:00–22:00、整点与半点可选 |
 | bookings | 预约记录（slot_id, booker, instance_date） |
+
+旧库启动时会明确提示迁移；参考 [迁移说明](scripts/README_migration.md)。数据库连接已开启外键校验，迁移脚本不会自动修改应用配置。
 
 ## Web 页面
 
 | 页面 | 说明 |
 |------|------|
-| 首页 | 最近刷卡记录 + UID/姓名绑定 + 一次性预约轮播 |
+| 首页 | 成员与卡片管理；点击绑定至当前账号；清理超过三天且无归属、未绑定的刷卡记录 |
 | 统计 | 考勤统计 + 柱状图 + 56天热力图 |
-| 详情 | 单人日历视图（4周） + 计划/完成 |
+| 详情 | 按账号展示上周、本周和下周计划及日报 |
 | 预约广场 | 发布/浏览/预约/编辑空闲时段（长期 + 一次性；活动过了结束时间仍可见但只读，昨日及更早的从广场隐藏） |
 
 ## API
@@ -115,7 +120,7 @@ SQLite（`attendance.db`），首次启动自动创建：
 | 接口 | 方法 | 认证 | 说明 |
 |------|------|------|------|
 | `/api/checkin` | POST | token + IP白名单 | 签到同步 |
-| `/api/weekly_plan` | POST | token | 每周计划（周六至周一中午12点） |
+| `/api/weekly_plan` | POST | token | 每周计划（周六至周一提交窗口，与网页共用规则） |
 | `/api/daily_completion` | POST | token | 每日完成情况 |
 | `/booking/` | GET | login | 预约广场主页 |
 | `/booking/publish` | GET/POST | login | 发布新预约时段（时间 6:00–22:00，整点+半点） |
@@ -123,6 +128,26 @@ SQLite（`attendance.db`），首次启动自动创建：
 | `/booking/book/<id>/<date>` | POST | login | 预约某个时段实例（已结束的实例会被拒绝） |
 | `/booking/cancel/<id>` | POST | login | 取消预约 |
 | `/booking/cancel_slot/<id>` | POST | login | 取消已发布的时段 |
+
+### API 身份字段
+
+- `/api/checkin` 继续接收设备的 `uid`（字符串）和可选 `timestamp`（`YYYY-MM-DD HH:MM:SS`）。服务端在同一事务中查询当前卡片归属，写入 `loginname` 和 `card_uid`，不采用客户端声称的账号。
+- `/api/weekly_plan`、`/api/daily_completion` 支持 `loginname`，也兼容旧客户端的卡号 `uid`。传卡号时必须已绑定；两者同时传入必须匹配。
+- 账号必须存在于 `users`；API Token 仍是可信客户端凭据，未改为面向普通用户的账号授权机制。
+- 周计划接收字符串列表 `items`，也兼容以换行分隔的 `content`；日报接收 `review` 和可选 `todo`，兼容用 `content` 表示回顾。
+- 响应提供 `loginname`，旧请求提交 `uid` 时响应继续保留 `uid`。
+- 统计、周报、月报按账号汇总，同日多卡签到只计一个出勤日，未归属签到不计入成员统计。月度 AI 结果保存到页面选中的月份。
+- 离线补传仍按服务端接收时的当前绑定解析账号。当前库没有绑定时间线，跨改绑补传的历史持卡人不能自动恢复；本次未增加绑定历史表。
+
+新账号请求示例（仍需原有 Token）：
+
+```json
+{"loginname": "alice", "items": ["完成接口适配"]}
+```
+
+```json
+{"loginname": "alice", "review": "完成数据库迁移验证", "todo": "进行联调"}
+```
 
 ## 文件说明
 

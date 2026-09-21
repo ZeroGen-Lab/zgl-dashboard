@@ -54,7 +54,7 @@
                     {% if s.summary %}
                     <div class="md-content" data-md="{{ s.summary | e }}"></div>
                     {% elif s.completion_count > 0 %}
-                    <form method="post" action="/monthly_summary/generate_summary/{{ s.uid }}">
+                    <form method="post" action="{{ url_for('dashboard.generate_summary', loginname=s.loginname) }}">
                         <input type="hidden" name="month_offset" value="{{ month_offset }}">
                         <button type="submit" class="btn btn-outline-primary btn-md" title="Generate summary"><i class="bi bi-stars"></i></button>
                     </form>
@@ -66,7 +66,7 @@
                     {% if s.suggestion %}
                     <div class="md-content" data-md="{{ s.suggestion | e }}"></div>
                     {% elif s.completion_count > 0 %}
-                    <form method="post" action="/monthly_summary/generate_suggestion/{{ s.uid }}">
+                    <form method="post" action="{{ url_for('dashboard.generate_suggestion', loginname=s.loginname) }}">
                         <input type="hidden" name="month_offset" value="{{ month_offset }}">
                         <button type="submit" class="btn btn-outline-primary btn-md" title="Generate suggestion"><i class="bi bi-stars"></i></button>
                     </form>

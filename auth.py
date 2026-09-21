@@ -4,12 +4,12 @@ import hashlib
 from functools import wraps
 from datetime import datetime, timedelta
 from flask import request, jsonify, session, redirect, url_for, flash
-from config import API_SECRET, ALLOWED_CHECKIN_IPS
+from config import API_SECRET, ALLOWED_CHECKIN_IPS, USERS_PATH
 
 # --- 加载合法用户集 ---
 VALID_USERS = set()
 ADMIN_USERS = set()
-_users_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.users.txt')
+_users_path = USERS_PATH
 if os.path.exists(_users_path):
     with open(_users_path) as f:
         for line in f:

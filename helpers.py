@@ -3,14 +3,6 @@ from datetime import datetime, timedelta
 from db import get_db_connection
 
 
-def uid_for_user(loginname):
-    """登录用户名 -> 绑定的 IC 卡 uid；未绑定返回 None。"""
-    conn = get_db_connection()
-    row = conn.execute("SELECT uid FROM users WHERE loginname=?", (loginname,)).fetchone()
-    conn.close()
-    return row['uid'] if row else None
-
-
 def compute_week_key(dt):
     """
     计算提交归属的 ISO week key。
@@ -29,7 +21,7 @@ def compute_week_key(dt):
         return None
 
 
-def save_weekly_plan(uid, week_key, items):
+def save_weekly_plan(loginname, week_key, items):
     """保存一周计划：清洗+校验后，单事务 upsert 父行(weekly_plans)并全量替换 items。
 
     - items: 字符串列表；去首尾空白后丢弃空串。
@@ -44,16 +36,18 @@ def save_weekly_plan(uid, week_key, items):
             raise ValueError("每条计划不能超过 30 字")
     conn = get_db_connection()
     try:
+        if not conn.execute('SELECT 1 FROM users WHERE loginname=?', (loginname,)).fetchone():
+            raise ValueError('用户账号不存在。')
         conn.execute(
-            "INSERT OR REPLACE INTO weekly_plans (uid, week_key, content) VALUES (?, ?, ?)",
-            (uid, week_key, "\n".join(cleaned)))
+            "INSERT OR REPLACE INTO weekly_plans (loginname, week_key, content) VALUES (?, ?, ?)",
+            (loginname, week_key, "\n".join(cleaned)))
         conn.execute(
-            "DELETE FROM weekly_plan_items WHERE uid=? AND week_key=?",
-            (uid, week_key))
+            "DELETE FROM weekly_plan_items WHERE loginname=? AND week_key=?",
+            (loginname, week_key))
         for order, text in enumerate(cleaned):
             conn.execute(
-                "INSERT INTO weekly_plan_items (uid, week_key, item_order, text) VALUES (?, ?, ?, ?)",
-                (uid, week_key, order, text))
+                "INSERT INTO weekly_plan_items (loginname, week_key, item_order, text) VALUES (?, ?, ?, ?)",
+                (loginname, week_key, order, text))
         conn.commit()
     finally:
         conn.close()
@@ -65,7 +59,7 @@ def current_completion_date():
     return (datetime.now() - timedelta(hours=6)).strftime('%Y-%m-%d')
 
 
-def save_daily_completion(uid, review, todo):
+def save_daily_completion(loginname, review, todo):
     """保存当天日报（review 必填，todo 选填）；多次编辑只保留最新（INSERT OR REPLACE）。
 
     - review 去首尾空白后不能为空；review/todo 各 ≤100 字，超出抛 ValueError（由调用方给出友好提示）。
@@ -83,9 +77,11 @@ def save_daily_completion(uid, review, todo):
     date = current_completion_date()
     conn = get_db_connection()
     try:
+        if not conn.execute('SELECT 1 FROM users WHERE loginname=?', (loginname,)).fetchone():
+            raise ValueError('用户账号不存在。')
         conn.execute(
-            "INSERT OR REPLACE INTO daily_completions (uid, date, review, todo) VALUES (?, ?, ?, ?)",
-            (uid, date, review, todo or None))
+            "INSERT OR REPLACE INTO daily_completions (loginname, date, review, todo) VALUES (?, ?, ?, ?)",
+            (loginname, date, review, todo or None))
         conn.commit()
     finally:
         conn.close()
@@ -93,13 +89,13 @@ def save_daily_completion(uid, review, todo):
     import threading
     threading.Thread(
         target=_auto_complete_weekly_plan_items,
-        args=(uid, review, date),
+        args=(loginname, review, date),
         daemon=True
     ).start()
     return date
 
 
-def _auto_complete_weekly_plan_items(uid, review, date_str):
+def _auto_complete_weekly_plan_items(loginname, review, date_str):
     """后台线程：用 review 让 AI 判定本周 open 的 weekly plan item 是否完成，命中则置 done。
 
     - week_key 取 date_str 所在周的周一 %Y%W（与 detail 页 this_key 一致）。
@@ -113,14 +109,14 @@ def _auto_complete_weekly_plan_items(uid, review, date_str):
         conn = get_db_connection()
         try:
             rows = conn.execute(
-                "SELECT id, text FROM weekly_plan_items WHERE uid=? AND week_key=? AND status='open'",
-                (uid, week_key)).fetchall()
+                "SELECT id, text FROM weekly_plan_items WHERE loginname=? AND week_key=? AND status='open'",
+                (loginname, week_key)).fetchall()
             if not rows:
                 return
             from llm import judge_completed_plan_items
             items = [{'id': r['id'], 'text': r['text']} for r in rows]
             session_id = uuid.uuid4().hex
-            done_ids = judge_completed_plan_items(review, items, session_id=session_id, uid=uid)
+            done_ids = judge_completed_plan_items(review, items, session_id=session_id, loginname=loginname)
             for item_id in done_ids:
                 conn.execute(
                     "UPDATE weekly_plan_items SET status='done', completed_date=?, completed_at=datetime('now','localtime') "
@@ -176,39 +172,39 @@ def generate_weekly_summary(week_offset=0):
     end_date = (summary_sunday + timedelta(days=1)).strftime('%Y-%m-%d')
 
     conn = get_db_connection()
-    users = conn.execute("SELECT uid, name FROM users ORDER BY name").fetchall()
+    users = conn.execute("SELECT loginname, name FROM users ORDER BY name").fetchall()
 
     att_rows = conn.execute(
-        "SELECT uid, COUNT(DISTINCT date(timestamp)) as days FROM sign_ins "
-        "WHERE timestamp >= ? AND timestamp < ? GROUP BY uid",
+        "SELECT loginname, COUNT(DISTINCT date(timestamp)) as days FROM sign_ins "
+        "WHERE loginname IS NOT NULL AND timestamp >= ? AND timestamp < ? GROUP BY loginname",
         (start_date + ' 00:00:00', end_date + ' 00:00:00')
     ).fetchall()
-    att_map = {r['uid']: r['days'] for r in att_rows}
+    att_map = {r['loginname']: r['days'] for r in att_rows}
 
     comp_rows = conn.execute(
-        "SELECT uid, COUNT(*) as cnt FROM daily_completions "
-        "WHERE date >= ? AND date < ? GROUP BY uid",
+        "SELECT loginname, COUNT(*) as cnt FROM daily_completions "
+        "WHERE date >= ? AND date < ? GROUP BY loginname",
         (start_date, end_date)
     ).fetchall()
-    comp_map = {r['uid']: r['cnt'] for r in comp_rows}
+    comp_map = {r['loginname']: r['cnt'] for r in comp_rows}
 
     plan_rows = conn.execute(
-        "SELECT uid FROM weekly_plans WHERE week_key = ?", (next_week_key,)
+        "SELECT loginname FROM weekly_plans WHERE week_key = ?", (next_week_key,)
     ).fetchall()
-    plan_set = set(r['uid'] for r in plan_rows)
+    plan_set = set(r['loginname'] for r in plan_rows)
 
     conn.close()
 
     summary_list = []
     for u in users:
-        if u['uid'] not in att_map and u['uid'] not in comp_map and u['uid'] not in plan_set:
+        if u['loginname'] not in att_map and u['loginname'] not in comp_map and u['loginname'] not in plan_set:
             continue  # inactive user
         summary_list.append({
-            'uid': u['uid'],
-            'name': u['name'],
-            'onsite_days': att_map.get(u['uid'], 0),
-            'completion_count': comp_map.get(u['uid'], 0),
-            'has_weekly_plan': u['uid'] in plan_set
+            'loginname': u['loginname'],
+            'name': u['name'] or u['loginname'],
+            'onsite_days': att_map.get(u['loginname'], 0),
+            'completion_count': comp_map.get(u['loginname'], 0),
+            'has_weekly_plan': u['loginname'] in plan_set
         })
     summary_list.sort(key=lambda x: x['onsite_days'], reverse=True)
     return summary_list
@@ -252,77 +248,77 @@ def generate_monthly_summary(month_offset=0):
             d += timedelta(days=1)
 
     conn = get_db_connection()
-    users = conn.execute("SELECT uid, name FROM users ORDER BY name").fetchall()
+    users = conn.execute("SELECT loginname, name FROM users ORDER BY name").fetchall()
 
     # Onsite days
     att_rows = conn.execute(
-        "SELECT uid, COUNT(DISTINCT date(timestamp)) as days FROM sign_ins "
-        "WHERE timestamp >= ? AND timestamp < ? GROUP BY uid",
+        "SELECT loginname, COUNT(DISTINCT date(timestamp)) as days FROM sign_ins "
+        "WHERE loginname IS NOT NULL AND timestamp >= ? AND timestamp < ? GROUP BY loginname",
         (start_str + ' 00:00:00', end_str + ' 00:00:00')
     ).fetchall()
-    att_map = {r['uid']: r['days'] for r in att_rows}
+    att_map = {r['loginname']: r['days'] for r in att_rows}
 
     # Daily completion count + text
     comp_rows = conn.execute(
-        "SELECT uid, COUNT(*) as cnt FROM daily_completions "
-        "WHERE date >= ? AND date < ? GROUP BY uid",
+        "SELECT loginname, COUNT(*) as cnt FROM daily_completions "
+        "WHERE date >= ? AND date < ? GROUP BY loginname",
         (start_str, end_str)
     ).fetchall()
-    comp_map = {r['uid']: r['cnt'] for r in comp_rows}
+    comp_map = {r['loginname']: r['cnt'] for r in comp_rows}
 
     comp_text_rows = conn.execute(
-        "SELECT uid, date, review, todo FROM daily_completions "
+        "SELECT loginname, date, review, todo FROM daily_completions "
         "WHERE date >= ? AND date < ? ORDER BY date",
         (start_str, end_str)
     ).fetchall()
-    comp_text_by_uid = {}
+    comp_text_by_loginname = {}
     for r in comp_text_rows:
         line = f"{r['date']}: 回顾:{r['review']}"
         if r['todo']:
             line += f" 计划:{r['todo']}"
-        comp_text_by_uid.setdefault(r['uid'], []).append(line)
+        comp_text_by_loginname.setdefault(r['loginname'], []).append(line)
 
     # Weekly plan count + text
     wk_placeholders = ','.join(['?'] * len(week_keys)) if week_keys else "'__none__'"
     plan_rows = conn.execute(
-        f"SELECT uid, COUNT(*) as cnt FROM weekly_plans "
-        f"WHERE week_key IN ({wk_placeholders}) GROUP BY uid",
+        f"SELECT loginname, COUNT(*) as cnt FROM weekly_plans "
+        f"WHERE week_key IN ({wk_placeholders}) GROUP BY loginname",
         week_keys
     ).fetchall() if week_keys else []
-    plan_map = {r['uid']: r['cnt'] for r in plan_rows}
+    plan_map = {r['loginname']: r['cnt'] for r in plan_rows}
 
     plan_text_rows = conn.execute(
-        f"SELECT uid, week_key, content FROM weekly_plans "
+        f"SELECT loginname, week_key, content FROM weekly_plans "
         f"WHERE week_key IN ({wk_placeholders}) ORDER BY week_key",
         week_keys
     ).fetchall() if week_keys else []
-    plan_text_by_uid = {}
+    plan_text_by_loginname = {}
     for r in plan_text_rows:
-        plan_text_by_uid.setdefault(r['uid'], []).append(f"Week {r['week_key']}: {r['content']}")
+        plan_text_by_loginname.setdefault(r['loginname'], []).append(f"Week {r['week_key']}: {r['content']}")
 
     # Cached LLM summaries
     summary_rows = conn.execute(
-        "SELECT uid, summary, suggestion FROM monthly_summaries WHERE month_key = ?",
+        "SELECT loginname, summary, suggestion FROM monthly_summaries WHERE month_key = ?",
         (month_key,)
     ).fetchall()
-    llm_map = {r['uid']: {'summary': r['summary'], 'suggestion': r['suggestion']} for r in summary_rows}
+    llm_map = {r['loginname']: {'summary': r['summary'], 'suggestion': r['suggestion']} for r in summary_rows}
 
     conn.close()
 
     summary_list = []
     for u in users:
-        uid = u['uid']
-        if uid not in att_map and uid not in comp_map and uid not in plan_map:
+        loginname = u['loginname']
+        if loginname not in att_map and loginname not in comp_map and loginname not in plan_map:
             continue
-        llm = llm_map.get(uid, {'summary': None, 'suggestion': None})
+        llm = llm_map.get(loginname, {'summary': None, 'suggestion': None})
         summary_list.append({
-            'uid': uid,
-            'name': u['name'],
-            'onsite_days': att_map.get(uid, 0),
-            'completion_count': comp_map.get(uid, 0),
-            'plan_count': plan_map.get(uid, 0),
-            'daily_completions_text': '\n'.join(comp_text_by_uid.get(uid, [])),
-            'weekly_plans_text': '\n'.join(plan_text_by_uid.get(uid, [])),
+            'loginname': loginname,
+            'name': u['name'] or u['loginname'],
+            'onsite_days': att_map.get(loginname, 0),
+            'completion_count': comp_map.get(loginname, 0),
+            'plan_count': plan_map.get(loginname, 0),
+            'daily_completions_text': '\n'.join(comp_text_by_loginname.get(loginname, [])),
+            'weekly_plans_text': '\n'.join(plan_text_by_loginname.get(loginname, [])),
             'summary': llm['summary'],
             'suggestion': llm['suggestion']
         })
