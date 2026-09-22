@@ -3,7 +3,7 @@ import uuid
 from flask import Blueprint, render_template, request, redirect, url_for, flash, session, abort
 from datetime import datetime, timedelta
 from db import get_db_connection
-from auth import login_required, VALID_USERS, is_admin
+from auth import login_required
 from helpers import compute_month_range, generate_monthly_summary, is_instance_expired, compute_week_key, save_weekly_plan, save_daily_completion, current_completion_date
 
 dashboard_bp = Blueprint('dashboard', __name__)
@@ -14,22 +14,13 @@ dashboard_bp = Blueprint('dashboard', __name__)
 def index():
     conn = get_db_connection()
 
-    # 清理超过三天的未知卡签到，已确认人员归属的历史记录始终保留。
-    cutoff = (datetime.now() - timedelta(days=3)).strftime('%Y-%m-%d %H:%M:%S')
-    with conn:
-        conn.execute('''
-            DELETE FROM sign_ins
-            WHERE loginname IS NULL AND timestamp < ?
-              AND NOT EXISTS (
-                  SELECT 1 FROM user_cards c WHERE c.uid = sign_ins.card_uid
-              )
-        ''', (cutoff,))
-
     # 人员按账号展示；即使删除全部卡片也保留该用户和历史签到。
+    # u.email 仅用于编辑表单预填当前值，页面成员列表不展示 email。
     members = [dict(row) for row in conn.execute('''
-        SELECT u.loginname, u.name, MAX(s.timestamp) AS last_time
+        SELECT u.loginname, u.name, u.email, MAX(s.timestamp) AS last_time
         FROM users u LEFT JOIN sign_ins s ON s.loginname = u.loginname
-        GROUP BY u.loginname, u.name
+        WHERE s.timestamp >= datetime('now','-180 days')
+        GROUP BY u.loginname, u.name, u.email
         ORDER BY last_time DESC, u.loginname
     ''').fetchall()]
     cards_by_user = {}
@@ -38,15 +29,13 @@ def index():
         cards_by_user.setdefault(row['loginname'], []).append(dict(row))
     for member in members:
         member['cards'] = cards_by_user.get(member['loginname'], [])
-        member['can_manage_cards'] = member['loginname'] == session['user'] or is_admin()
+        member['can_manage_cards'] = member['loginname'] == session['user']
 
-    # 这里只读展示，不因删除卡片关系就清理其历史签到记录。
+    # 未归属签到只展示不删除，仅显示近3天刷卡，避免列表无限累积。
     unbound_cards = conn.execute('''
         SELECT s.card_uid AS uid, MAX(s.timestamp) AS last_time
         FROM sign_ins s
-        WHERE s.card_uid IS NOT NULL AND s.card_uid != ''
-          AND s.timestamp >= date('now','-180 days')
-          AND NOT EXISTS (SELECT 1 FROM user_cards c WHERE c.uid = s.card_uid)
+        WHERE s.loginname IS NULL AND s.timestamp >= datetime('now','-3 days')
         GROUP BY s.card_uid ORDER BY last_time DESC
     ''').fetchall()
 
@@ -83,28 +72,31 @@ def bind():
     if not uid:
         flash('缺少卡片 UID。')
         return redirect(url_for('dashboard.index'))
-    if loginname not in VALID_USERS:
-        flash('当前登录账号无效，请重新登录。')
-        return redirect(url_for('dashboard.index'))
 
     conn = get_db_connection()
     try:
         # 账号创建和卡片占用检查处于同一写事务，防止并发抢绑。
         conn.execute('BEGIN IMMEDIATE')
         if conn.execute('SELECT id FROM user_cards WHERE uid=?', (uid,)).fetchone():
-            flash('该卡片已经绑定，请先删除原卡片关系。')
+            conn.rollback()
+            flash('该卡片已经绑定。')
             return redirect(url_for('dashboard.index'))
-        user = conn.execute(
-            'SELECT loginname FROM users WHERE loginname=?', (loginname,)).fetchone()
-        if not user:
-            conn.execute('INSERT INTO users(loginname, name) VALUES (?, ?)', (loginname, loginname))
-        # 已有用户沿用原资料，不因新增卡片覆盖姓名。
+        # users 行在登录时已建档，外键目标必然存在。
         conn.execute('INSERT INTO user_cards(uid, loginname) VALUES (?, ?)', (uid, loginname))
+
+        # 同一事务内认领该卡所有未归属签到，与并发解绑/签到写入互斥，不会部分认领。
+        claimed = conn.execute(
+            'UPDATE sign_ins SET loginname=? WHERE card_uid=? AND loginname IS NULL',
+            (loginname, uid)
+        ).rowcount
         conn.commit()
-        flash('绑定成功。')
+        if claimed:
+            flash(f'绑定成功，已认领该卡 {claimed} 条未归属签到。')
+        else:
+            flash('绑定成功。')
     except sqlite3.IntegrityError:
         conn.rollback()
-        flash('绑定失败：该卡片可能已被绑定，请刷新后重试。')
+        flash('绑定失败：卡片已被他人绑定，或当前账号缺少档案（重新登录后重试）。')
     finally:
         conn.close()
     return redirect(url_for('dashboard.index'))
@@ -113,7 +105,7 @@ def bind():
 @dashboard_bp.route('/delete_card', methods=['POST'])
 @login_required
 def delete_card():
-    """只删除指定卡片关系，账号及历史数据保留。"""
+    """解绑卡片：删除卡片关系，该卡历史签到归属同步置空（记录保留，重新绑定可再认领）。"""
     binding_id = request.form.get('binding_id', type=int)
     if binding_id is None or binding_id <= 0:
         flash('缺少有效的卡片绑定编号。')
@@ -121,12 +113,58 @@ def delete_card():
 
     conn = get_db_connection()
     try:
-        card = conn.execute('SELECT loginname FROM user_cards WHERE id=?', (binding_id,)).fetchone()
-        if card and card['loginname'] != session['user'] and not is_admin():
+        # 解绑与归属置空在同一写事务，与签到写入互斥，避免归属中途被改写。
+        conn.execute('BEGIN IMMEDIATE')
+        card = conn.execute(
+            'SELECT uid, loginname FROM user_cards WHERE id=?', (binding_id,)
+        ).fetchone()
+        if not card:
+            conn.rollback()
+            flash('该卡片已删除或不存在。')
+            return redirect(url_for('dashboard.index'))
+        # 仅卡片主人本人可解绑自己的卡（管理员也不可代解）。
+        if card['loginname'] != session['user']:
+            conn.rollback()
             abort(403)
+        conn.execute('DELETE FROM user_cards WHERE id=?', (binding_id,))
+        released = conn.execute(
+            'UPDATE sign_ins SET loginname=NULL WHERE card_uid=? AND loginname=?',
+            (card['uid'], card['loginname'])).rowcount
+        conn.commit()
+        if released:
+            flash(f'卡片已解绑，{released} 条历史签到转为未归属。')
+        else:
+            flash('卡片已解绑。')
+    finally:
+        conn.close()
+    return redirect(url_for('dashboard.index'))
+
+
+@dashboard_bp.route('/update_profile', methods=['POST'])
+@login_required
+def update_profile():
+    """成员更新自己的姓名与邮箱；邮箱可留空（存 NULL），对部署前已登录的旧会话兜底建档（upsert）。"""
+    name = (request.form.get('name') or '').strip()
+    email = (request.form.get('email') or '').strip()
+    if not name:
+        flash('姓名不能为空。')
+        return redirect(url_for('dashboard.index'))
+    if len(name) > 6:
+        flash('姓名不能超过 6 个字符。')
+        return redirect(url_for('dashboard.index'))
+    if email and ('@' not in email or len(email) > 254):
+        flash('邮箱格式不正确。')
+        return redirect(url_for('dashboard.index'))
+    conn = get_db_connection()
+    try:
         with conn:
-            result = conn.execute('DELETE FROM user_cards WHERE id=?', (binding_id,))
-        flash('卡片已删除，账号和历史数据已保留。' if result.rowcount else '该卡片已删除或不存在。')
+            conn.execute(
+                "INSERT INTO users(loginname, name, email) VALUES (?, ?, ?) "
+                "ON CONFLICT(loginname) DO UPDATE SET name=excluded.name, email=excluded.email",
+                (session['user'], name, email or None))
+        flash('个人信息已更新。')
+    except sqlite3.IntegrityError:
+        flash('该邮箱已被其他账号绑定。')
     finally:
         conn.close()
     return redirect(url_for('dashboard.index'))

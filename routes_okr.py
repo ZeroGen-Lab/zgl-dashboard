@@ -272,10 +272,7 @@ def kr_add():
         flash('This objective cannot have key results added (must be in planning cycle and the objective must be approved).')
         conn.close()
         return redirect(url_for('okr.okr_page', cycle=cycle_key))
-    # 允许已登录但尚未绑卡的成员创建自己的 KR。
-    conn.execute(
-        "INSERT INTO users(loginname, name) VALUES (?, ?) ON CONFLICT(loginname) DO NOTHING",
-        (loginname, loginname))
+    # users 行在登录时已建档，外键目标必然存在。
     conn.execute(
         "INSERT INTO okr_key_results (objective_id, loginname, title, description) VALUES (?, ?, ?, ?)",
         (objective_id, loginname, title, description)
