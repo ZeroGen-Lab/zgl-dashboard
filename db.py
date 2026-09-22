@@ -4,6 +4,7 @@ from config import DB_PATH
 
 def get_db_connection():
     conn = sqlite3.connect(DB_PATH)
+    conn.execute('PRAGMA foreign_keys=ON')
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -12,24 +13,48 @@ def ensure_tables():
     """确保所有必要的表存在，启动时调用"""
     conn = get_db_connection()
 
+    # 旧库必须先离线迁移，避免启动后形成新旧字段混用的数据库。
+    for table in ('users', 'sign_ins', 'weekly_plans', 'weekly_plan_items',
+                  'daily_completions', 'monthly_summaries', 'okr_key_results', 'llm_calls'):
+        cols = {row['name'] for row in conn.execute(f'PRAGMA table_info({table})')}
+        if cols and ('uid' in cols or 'loginname' not in cols
+                     or (table == 'sign_ins' and 'card_uid' not in cols)):
+            conn.close()
+            raise RuntimeError(
+                f'数据库 {table} 仍为旧结构，请先运行 scripts/migrate_account_identity.py '
+                '迁移到新库，再修改 .config.yml 的 db_path。')
+
+    # 业务记录保留自身 id 主键，人员统一用 loginname 关联；未绑定签到允许账号为空。
+    # card_uid 仅记录刷卡来源，后续解绑/换卡不应改变已经确认的人员归属。
     conn.execute('''CREATE TABLE IF NOT EXISTS sign_ins
-                    (id INTEGER PRIMARY KEY AUTOINCREMENT, uid TEXT, timestamp DATETIME)''')
-    # loginname：登录用户名（来自 .users.txt），与 IC 卡 uid 1:1 绑定；
-    # SQLite 的 UNIQUE 把 NULL 视为互异，故允许多个 NULL（未绑定的卡），非 NULL 登录名唯一
+                    (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                     loginname TEXT REFERENCES users(loginname),
+                     card_uid TEXT,
+                     timestamp DATETIME)''')
+    # 用户身份以 loginname 为主键；卡片关系单独保存，支持一个账号绑定多张卡。
+    # 此处仅定义新库结构，CREATE TABLE IF NOT EXISTS 不会修改已有表的主键。
     conn.execute('''CREATE TABLE IF NOT EXISTS users
-                    (uid TEXT PRIMARY KEY, name TEXT, loginname TEXT UNIQUE)''')
-    
+                    (loginname TEXT PRIMARY KEY NOT NULL, name TEXT)''')
+
+    # id 用于页面管理绑定，uid 仍唯一；loginname 不设 UNIQUE，允许一人多卡。
+    conn.execute('''CREATE TABLE IF NOT EXISTS user_cards
+                    (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                     uid TEXT NOT NULL UNIQUE,
+                     loginname TEXT NOT NULL REFERENCES users(loginname))''')
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_user_cards_loginname "
+                 "ON user_cards(loginname)")
+
     conn.execute('''CREATE TABLE IF NOT EXISTS weekly_plans
                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                     uid TEXT NOT NULL,
+                     loginname TEXT NOT NULL REFERENCES users(loginname),
                      week_key TEXT NOT NULL,
                      content TEXT NOT NULL,
                      submitted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                     UNIQUE(uid, week_key))''')
+                     UNIQUE(loginname, week_key))''')
     # weekly plan 的 TODO 列表（itemized）；status 供后续 daily completion 标记完成（done）
     conn.execute('''CREATE TABLE IF NOT EXISTS weekly_plan_items
                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                     uid TEXT NOT NULL,
+                     loginname TEXT NOT NULL REFERENCES users(loginname),
                      week_key TEXT NOT NULL,
                      item_order INTEGER NOT NULL,
                      text TEXT NOT NULL,
@@ -37,19 +62,19 @@ def ensure_tables():
                      completed_date TEXT,
                      completed_at DATETIME,
                      created_at DATETIME DEFAULT CURRENT_TIMESTAMP)''')
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_wpi_uid_week "
-                 "ON weekly_plan_items(uid, week_key)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_wpi_loginname_week "
+                 "ON weekly_plan_items(loginname, week_key)")
     
     # review：上一工作周期总结（必填）；todo：下一工作周期计划（可选）
     # 旧库的 content 列已通过迁移脚本改为 review（旧值即 review），todo 回填为 NULL
     conn.execute('''CREATE TABLE IF NOT EXISTS daily_completions
                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                     uid TEXT NOT NULL,
+                     loginname TEXT NOT NULL REFERENCES users(loginname),
                      date TEXT NOT NULL,
                      review TEXT NOT NULL,
                      todo TEXT,
                      submitted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                     UNIQUE(uid, date))''')
+                     UNIQUE(loginname, date))''')
     
     conn.execute('''CREATE TABLE IF NOT EXISTS booking_slots
                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -74,12 +99,12 @@ def ensure_tables():
                      UNIQUE(slot_id, booker, instance_date))''')
     
     conn.execute('''CREATE TABLE IF NOT EXISTS monthly_summaries
-                    (uid TEXT NOT NULL,
+                    (loginname TEXT NOT NULL REFERENCES users(loginname),
                      month_key TEXT NOT NULL,
                      summary TEXT,
                      suggestion TEXT,
                      generated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                     UNIQUE(uid, month_key))''')
+                     UNIQUE(loginname, month_key))''')
    
     conn.execute('''CREATE TABLE IF NOT EXISTS okr_cycles
                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -100,7 +125,7 @@ def ensure_tables():
     conn.execute('''CREATE TABLE IF NOT EXISTS okr_key_results
                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
                      objective_id INTEGER NOT NULL REFERENCES okr_objectives(id),
-                     uid TEXT NOT NULL,
+                     loginname TEXT NOT NULL REFERENCES users(loginname),
                      title TEXT NOT NULL,
                      description TEXT DEFAULT '',
                      progress INTEGER NOT NULL DEFAULT 0 CHECK(progress >= 0 AND progress <= 100),
@@ -122,7 +147,7 @@ def ensure_tables():
                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
                      request_id TEXT NOT NULL UNIQUE,
                      session_id TEXT NOT NULL,
-                     uid TEXT,
+                     loginname TEXT REFERENCES users(loginname),
                      model TEXT,
                      prompt TEXT,
                      response TEXT,

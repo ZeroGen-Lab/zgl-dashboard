@@ -178,7 +178,7 @@
     </div>
     <div class="card-body">
         {% for kr in obj.krs %}
-        {% set is_owner = kr.uid == current_user %}
+        {% set is_owner = kr.loginname == current_user %}
         {% set can_progress = is_owner and cycle.status == 'active' and kr.status in ['active', 'pending_edit'] %}
         {% set can_edit_planning = is_owner and cycle.status == 'planning' and kr.status == 'active' %}
         {% set can_edit_active = is_owner and cycle.status == 'active' and kr.status == 'active' %}
@@ -189,7 +189,7 @@
                 <div class="d-flex align-items-center gap-2 flex-grow-1">
                     {% if is_committed %}<span class="kr-number">KR{{ loop.index }}</span>{% endif %}
                     <strong>{{ kr.title }}</strong>
-                    {% if is_committed %}<span class="kr-owner">({{ kr.uid }})</span>{% endif %}
+                    {% if is_committed %}<span class="kr-owner">({{ kr.loginname }})</span>{% endif %}
                     {% if kr.status == 'pending_edit' %}<span class="badge bg-warning text-dark">Pending Edit</span>{% endif %}
                 </div>
                 <div class="d-flex align-items-center gap-2">
@@ -293,7 +293,7 @@
         <form method="POST" action="{{ url_for('okr.kr_add') }}" class="submit-form mt-2 pt-2 border-top">
             <input type="hidden" name="cycle_key" value="{{ selected_cycle }}">
             <input type="hidden" name="objective_id" value="{{ obj.id }}">
-            <input type="hidden" name="uid" value="{{ current_user }}">
+            <input type="hidden" name="loginname" value="{{ current_user }}">
             <input name="title" class="form-control form-control-sm" placeholder="Key Result title" required>
             <input name="description" class="form-control form-control-sm" placeholder="Description (optional)">
             <button class="btn btn-sm btn-outline-success"><i class="bi bi-plus-circle"></i> Add KR</button>

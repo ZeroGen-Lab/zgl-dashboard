@@ -27,6 +27,9 @@
     {% block extra_style %}{% endblock %}
 </head>
 <body>
+    {% if config.get('ENV_NAME') == 'test' %}
+    <div class="alert alert-info rounded-0 mb-0 py-2 text-center">本地测试环境 · 使用独立测试数据</div>
+    {% endif %}
     <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
         <div class="container">
             <span class="navbar-brand">ZGL数字看板</span>

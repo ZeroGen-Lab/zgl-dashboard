@@ -28,16 +28,16 @@ def _extract_usage(usage):
 
 
 def _log_llm_call(session_id, request_id, model, messages, content,
-                  token_usage, status, error, uid, requested_at):
+                  token_usage, status, error, loginname, requested_at):
     """把一次 LLM 调用落库到 llm_calls。best-effort：任何异常都 pass 吞掉，不影响调用本身。"""
     try:
         conn = get_db_connection()
         try:
             conn.execute(
                 "INSERT INTO llm_calls "
-                "(request_id, session_id, uid, model, prompt, response, status, token_usage, error, requested_at) "
+                "(request_id, session_id, loginname, model, prompt, response, status, token_usage, error, requested_at) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (request_id, session_id, uid, model,
+                (request_id, session_id, loginname, model,
                  json.dumps(messages, ensure_ascii=False),
                  content,
                  status,
@@ -51,7 +51,7 @@ def _log_llm_call(session_id, request_id, model, messages, content,
         pass
 
 
-def call_deepseek(system_prompt, user_prompt, model=MODEL, session_id=None, request_id=None, uid=None):
+def call_deepseek(system_prompt, user_prompt, model=MODEL, session_id=None, request_id=None, loginname=None):
     """调用 DeepSeek chat completions API，返回文本响应。
 
     每次调用都会落库到 llm_calls：
@@ -69,7 +69,7 @@ def call_deepseek(system_prompt, user_prompt, model=MODEL, session_id=None, requ
 
     if not DEEPSEEK_API_KEY:
         _log_llm_call(session_id, request_id, model, messages, None, None,
-                      'error', 'DEEPSEEK_API_KEY not configured', uid, requested_at)
+                      'error', 'DEEPSEEK_API_KEY not configured', loginname, requested_at)
         return None
 
     client = OpenAI(
@@ -88,19 +88,20 @@ def call_deepseek(system_prompt, user_prompt, model=MODEL, session_id=None, requ
         content = response.choices[0].message.content
         _log_llm_call(session_id, request_id, model, messages, content,
                       _extract_usage(getattr(response, 'usage', None)),
-                      'success', None, uid, requested_at)
+                      'success', None, loginname, requested_at)
         return content
     except Exception as e:
         _log_llm_call(session_id, request_id, model, messages, None, None,
-                      'error', str(e), uid, requested_at)
+                      'error', str(e), loginname, requested_at)
         return None
 
 
-def generate_daily_summary(uid, name, completions_text, session_id=None):
+def generate_daily_summary(loginname, name, completions_text, session_id=None, month_key=None):
     """为某成员生成 daily completion 摘要并存入 monthly_summaries"""
     from db import get_db_connection
     from helpers import compute_month_range
-    _, _, month_key = compute_month_range(0)
+    if month_key is None:
+        _, _, month_key = compute_month_range(0)
 
     system_prompt = (
         "你是一个团队工作摘要助手。请根据以下成员的每日工作完成记录，"
@@ -108,24 +109,25 @@ def generate_daily_summary(uid, name, completions_text, session_id=None):
     )
     user_prompt = f"成员：{name}\n\n每日工作完成记录：\n{completions_text}"
 
-    result = call_deepseek(system_prompt, user_prompt, session_id=session_id, uid=uid)
+    result = call_deepseek(system_prompt, user_prompt, session_id=session_id, loginname=loginname)
     if result:
         conn = get_db_connection()
         conn.execute(
-            "INSERT INTO monthly_summaries (uid, month_key, summary) VALUES (?, ?, ?) "
-            "ON CONFLICT(uid, month_key) DO UPDATE SET summary=?, generated_at=datetime('now','localtime')",
-            (uid, month_key, result, result)
+            "INSERT INTO monthly_summaries (loginname, month_key, summary) VALUES (?, ?, ?) "
+            "ON CONFLICT(loginname, month_key) DO UPDATE SET summary=?, generated_at=datetime('now','localtime')",
+            (loginname, month_key, result, result)
         )
         conn.commit()
         conn.close()
     return result
 
 
-def generate_work_suggestion(uid, name, completions_text, plans_text, session_id=None):
+def generate_work_suggestion(loginname, name, completions_text, plans_text, session_id=None, month_key=None):
     """为某成员结合 weekly plan 和 daily completion 生成工作建议并存入 monthly_summaries"""
     from db import get_db_connection
     from helpers import compute_month_range
-    _, _, month_key = compute_month_range(0)
+    if month_key is None:
+        _, _, month_key = compute_month_range(0)
 
     system_prompt = (
         "你是一个团队工作建议助手。根据成员的每周计划和每日完成记录，"
@@ -133,20 +135,20 @@ def generate_work_suggestion(uid, name, completions_text, plans_text, session_id
     )
     user_prompt = f"成员：{name}\n\n每周计划：\n{plans_text}\n\n每日工作完成记录：\n{completions_text}"
 
-    result = call_deepseek(system_prompt, user_prompt, session_id=session_id, uid=uid)
+    result = call_deepseek(system_prompt, user_prompt, session_id=session_id, loginname=loginname)
     if result:
         conn = get_db_connection()
         conn.execute(
-            "INSERT INTO monthly_summaries (uid, month_key, suggestion) VALUES (?, ?, ?) "
-            "ON CONFLICT(uid, month_key) DO UPDATE SET suggestion=?, generated_at=datetime('now','localtime')",
-            (uid, month_key, result, result)
+            "INSERT INTO monthly_summaries (loginname, month_key, suggestion) VALUES (?, ?, ?) "
+            "ON CONFLICT(loginname, month_key) DO UPDATE SET suggestion=?, generated_at=datetime('now','localtime')",
+            (loginname, month_key, result, result)
         )
         conn.commit()
         conn.close()
     return result
 
 
-def judge_completed_plan_items(review, items, session_id=None, uid=None):
+def judge_completed_plan_items(review, items, session_id=None, loginname=None):
     """根据 review 判断 items(本周开放项) 中哪些已被完成，返回判定完成的 id 列表。
 
     - items: [{'id': int, 'text': str}, ...]，仅含 status='open' 的项。
@@ -164,7 +166,7 @@ def judge_completed_plan_items(review, items, session_id=None, uid=None):
     )
     user = (f"今日工作回顾：\n{review}\n\n本周待判定的计划项：\n"
             f"{json.dumps(items, ensure_ascii=False)}")
-    text = call_deepseek(system, user, model=ADVANCED_MODEL, session_id=session_id, uid=uid)
+    text = call_deepseek(system, user, model=ADVANCED_MODEL, session_id=session_id, loginname=loginname)
     if not text:
         return []
     try:

@@ -35,12 +35,12 @@
     <h4 class="mb-4">Onsite 统计（单位: 天）</h4>
     <table class="table table-striped text-center">
         <thead class="table-dark">
-            <tr><th>姓名 (UID)</th><th>近15天</th><th>近60天</th><th>近180天</th><th>{{ last_month_label }}</th></tr>
+            <tr><th>姓名（账号）</th><th>近15天</th><th>近60天</th><th>近180天</th><th>{{ last_month_label }}</th></tr>
         </thead>
         <tbody>
             {% for s in stats %}
             <tr>
-                <td><strong>{{s.name}}</strong> <small class="text-muted">({{s.uid}})</small></td>
+                <td><strong>{{s.name}}</strong> <small class="text-muted">({{s.loginname}})</small></td>
                 <td>{{s.d15}} 天</td><td>{{s.d60}} 天</td><td>{{s.d180}} 天</td><td>{{s.last_month}} 天</td>
             </tr>
             {% endfor %}
@@ -50,7 +50,7 @@
 
 <div class="card p-4 mb-4">
     <h5 class="mb-3">近30天 Onsite 天数统计</h5>
-    <canvas id="barChart" height="{{ uid_count * 30 }}"></canvas>
+    <canvas id="barChart" height="{{ [member_count * 30, 30] | max }}"></canvas>
 </div>
 
 <div class="card p-4">
@@ -61,7 +61,7 @@
         <span class="heatmap-date" style="min-width:18.5px;">{% if i == 0 or i % 7 == 6 %}{{ heatmap_dates[i] }}{% endif %}</span>
         {% endfor %}
     </div>
-    {% for uid, name, days in heatmap_data %}
+    {% for loginname, name, days in heatmap_data %}
     <div class="heatmap-row mb-1">
         <span class="heatmap-label">{{ name }}</span>
         {% for i in range(56) %}

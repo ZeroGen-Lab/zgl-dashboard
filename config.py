@@ -2,28 +2,39 @@ import os
 import sys
 import yaml
 
-# --- 从 .config.yml 加载配置 ---
-_config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.config.yml')
-with open(_config_path) as f:
-    _config = yaml.safe_load(f)
-
-# --- 环境检测：sys.argv 或环境变量 ZGL_ENV ---
+# --- 环境检测：测试环境必须显式指定独立数据库，不读取真实配置 ---
 def get_env():
-    if os.environ.get('ZGL_ENV') == 'pre':
-        return 'pre'
-    if len(sys.argv) > 1 and sys.argv[1] == 'pre':
-        return 'pre'
+    requested = os.environ.get('ZGL_ENV')
+    if requested in ('pre', 'test'):
+        return requested
+    if len(sys.argv) > 1 and sys.argv[1] in ('pre', 'test'):
+        return sys.argv[1]
     return 'prod'
 
-ENV = get_env()
 
-# --- 根据环境合并配置：pre 节覆盖 server 节，未指定字段回退到 server ---
-_server = _config['server']
-if ENV == 'pre':
-    _pre = _config.get('pre', {})
-    _effective = {**_server, **_pre}
+ENV = get_env()
+_project_dir = os.path.dirname(os.path.abspath(__file__))
+if ENV == 'test':
+    import secrets
+    _test_db = os.environ.get('ZGL_TEST_DB_PATH')
+    if not _test_db or not os.path.isabs(_test_db):
+        raise RuntimeError('测试环境需要通过 ZGL_TEST_DB_PATH 指定独立数据库的绝对路径。')
+    _effective = {
+        'db_path': _test_db,
+        'db_bak_dir': os.path.dirname(_test_db),
+        'port': int(os.environ.get('ZGL_TEST_PORT', '5051')),
+        'api_secret': 'zgl-local-test-only',
+        'secret_key': secrets.token_hex(32),
+        'allowed_checkin_ips': ['127.0.0.1', '::1'],
+    }
+    USERS_PATH = os.environ.get('ZGL_TEST_USERS_PATH', _test_db + '.users.txt')
 else:
-    _effective = _server
+    _config_path = os.path.join(_project_dir, '.config.yml')
+    with open(_config_path) as f:
+        _config = yaml.safe_load(f)
+    _server = _config['server']
+    _effective = {**_server, **_config.get('pre', {})} if ENV == 'pre' else _server
+    USERS_PATH = os.path.join(_project_dir, '.users.txt')
 
 DB_PATH = _effective['db_path']
 DB_BAK_DIR = _effective['db_bak_dir']
@@ -37,6 +48,7 @@ DEEPSEEK_API_KEY = _effective.get('deepseek_api_key', '')
 DEEPSEEK_BASE_URL = _effective.get('deepseek_base_url', 'https://api.deepseek.com')
 
 flask_config = {
+    'ENV_NAME': ENV,
     'DB_PATH': DB_PATH,
     'API_SECRET': API_SECRET,
     'DB_BAK_DIR': DB_BAK_DIR,

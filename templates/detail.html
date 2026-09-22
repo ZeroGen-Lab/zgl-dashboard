@@ -71,7 +71,7 @@
 <div class="week-plan-card">
     {% if editable %}
     <form method="POST" action="{{ url_for('dashboard.weekly_plan_save') }}" id="planForm">
-        <input type="hidden" name="uid" value="{{ uid }}">
+        <input type="hidden" name="loginname" value="{{ loginname }}">
         <div class="d-flex justify-content-between align-items-center mb-2">
             <span class="section-label">计划 <small class="text-muted fw-normal">（提交窗口：周六 00:00 ~ 周一 18:00；不超过5条，每条不超过30字符）</small></span>
             <button type="button" class="btn btn-outline-primary dc-toggle wp-toggle" onclick="toggleWpEdit(this)" title="编辑">
@@ -129,7 +129,7 @@
     {% for day in days %}
     {% if day.can_edit %}
     <form class="cal-day-row past" method="POST" action="{{ url_for('dashboard.daily_completion_save') }}">
-        <input type="hidden" name="uid" value="{{ uid }}">
+        <input type="hidden" name="loginname" value="{{ loginname }}">
         <div class="day-label">
             <span>{{ day.weekday }} {{ day.date_str }}</span>
             <button type="button" class="btn btn-outline-primary dc-toggle" onclick="toggleDcEdit(this)" title="编辑">
@@ -167,7 +167,7 @@
         <h4 class="mb-0">{{ name }} <small class="text-muted fs-6">的工作规划与推进概览</small></h4>
         <a href="/" class="btn btn-outline-secondary btn-sm">返回</a>
     </div>
-    <p class="text-muted small mb-3">UID: {{ uid }}</p>
+    <p class="text-muted small mb-3">账号：{{ loginname }}</p>
 
     {# —— 上周：完成情况 —— #} 
     <div class="week-band last">
