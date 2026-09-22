@@ -29,7 +29,7 @@ sudo python3 checkin_usb.py
 
 - **`app.py`**（入口）：创建 Flask app，加载配置，注册 5 个 Blueprint，注册 `fmt_time` Jinja 过滤器（浮点小时 → `"HH:MM"`，如 `6.5` → `06:30`，用于 booking 半点时间显示），启动服务；若配置了钉钉 webhook 则启动 APScheduler 周一定时推送周报
 - **`config.py`**：从 `.config.yml` 加载配置，导出模块级全局变量（`DB_PATH`, `API_SECRET`, `ALLOWED_CHECKIN_IPS`, `SECRET_KEY`, `DINGTALK_WEBHOOK_URL`, `DINGTALK_SECRET`）
-- **`db.py`**：数据库连接（`get_db_connection()`）和 11 张表的初始化（`ensure_tables()`）
+- **`db.py`**：数据库连接（`get_db_connection()`）和 19 张表的初始化（`ensure_tables()`）
 - **`auth.py`**：认证基础设施——用户集（`.users.txt`）、HMAC token 生成/验证、装饰器（`login_required`, `token_required`, `checkin_ip_required`）
 - **`helpers.py`**：业务辅助函数（`compute_week_key`, `compute_upcoming_instances`, `is_instance_expired`, `compute_summary_week_range`, `generate_weekly_summary`）。`is_instance_expired(slot, date)` 判断 booking 实例是否已过结束时间（`now ≥ 当日 + end_hour`），用于实效只读判定
 - **`notifier.py`**：钉钉群机器人消息推送（`send_dingtalk_markdown`），支持 HMAC-SHA256 加签
@@ -43,7 +43,7 @@ sudo python3 checkin_usb.py
 **数据同步流：** 读卡器 → 本地 DB 写入 → HTTP POST `/api/checkin`（带 HMAC token） → 服务端 DB 写入
 
 **端侧与服务端的 `sign_ins` 表结构不同：**
-- 服务端：`id, uid, timestamp`（无 synced 字段）
+- 服务端：`id, loginname, card_uid, timestamp`（无 synced 字段）
 - 端侧：`id, uid, timestamp, synced`
 
 **认证机制：**
@@ -53,18 +53,38 @@ sudo python3 checkin_usb.py
 
 ## Database
 
-SQLite（`attendance.db` / `attendance_pre.db`），表：
-- `sign_ins`：签到记录（id, uid, timestamp），端侧额外有 synced 字段
-- `users`：UID-姓名绑定（uid PK, name）
-- `weekly_plans`：每周计划（id, uid, week_key, content, submitted_at），UNIQUE(uid, week_key)
-- `daily_completions`：每日完成情况（id, uid, date, content, submitted_at），UNIQUE(uid, date)
-- `booking_slots`：预约时段（id, publisher, slot_type, title, description, day_of_week, start_hour, end_hour, specific_date, capacity, status, created_at）。slot_type ∈ {'recurring', 'one_time'}；`start_hour`/`end_hour` 为 **REAL（浮点小时，`6.5`=6:30）**，范围 6.0–22.0、整点与半点可选。旧库的 INTEGER 列靠 SQLite 亲和性也能存浮点，**无需迁移即可工作**（仅 `.schema` 声明仍为 INTEGER，可选地用重建表方式改为 REAL）
+SQLite（`attendance.db` / `attendance_pre.db`），19 张表由 `db.py: ensure_tables()` 创建。所有"行创建时刻"型时间戳列的默认值统一为 `datetime('now','localtime')`（服务器本地时间）；业务时刻/生命周期时刻列（如 sign_ins.timestamp、closed_at、departed_at）无默认值。数据库连接开启外键校验（`PRAGMA foreign_keys=ON`）。
+
+**身份与卡片：**
+- `users`：账号（loginname PK, name, email）。email 全局唯一（UNIQUE，允许多行 NULL）；**登录即建档**（name 以登录名占位），姓名/邮箱仅本人经 `/update_profile` 修改
+- `user_cards`：卡片绑定（id, uid UNIQUE, loginname FK users）；一人可多卡，一卡只属于一人
+- `sign_ins`：签到记录（id, loginname FK 可空, card_uid, timestamp）。归属在落库时按当时绑定解析；未绑定卡 loginname 为 NULL。**绑定认领该卡全部 NULL 记录，解绑将其归属置空**（记录永不删除，重新绑定可再认领）
+
+**工作计划/日报/月报：**
+- `weekly_plans`：每周计划（id, loginname, week_key, content, submitted_at），UNIQUE(loginname, week_key)
+- `weekly_plan_items`：计划 TODO 条目（id, loginname, week_key, item_order, text, status∈{open,done}, completed_date, completed_at, created_at）
+- `daily_completions`：日报（id, loginname, date, review 必填, todo 可选, submitted_at），UNIQUE(loginname, date)
+- `monthly_summaries`：AI 月报缓存（loginname, month_key, summary, suggestion, generated_at），UNIQUE(loginname, month_key)
+
+**预约广场：**
+- `booking_slots`：预约时段（id, publisher, slot_type∈{recurring,one_time}, title, description, day_of_week, start_hour, end_hour, specific_date, capacity, status∈{active,cancelled}, created_at）。`start_hour`/`end_hour` 为 **REAL（浮点小时，`6.5`=6:30）**，范围 6.0–22.0、整点与半点可选
 - `bookings`：预约记录（id, slot_id, booker, instance_date, status, booked_at），UNIQUE(slot_id, booker, instance_date)
-- `monthly_summaries`：月报缓存（uid, month_key, summary, suggestion, generated_at），UNIQUE(uid, month_key)
-- `okr_cycles`：OKR 周期（id, cycle_key, status, created_by, created_at），status ∈ {brainstorming, active, closed}
-- `okr_objectives`：目标 O（id, cycle_id, title, description, status, proposed_by, created_at），status ∈ {draft, approved}
-- `okr_key_results`：关键结果 KR（id, objective_id, uid, title, description, progress, status, created_at），status ∈ {active, pending_delete, cancelled}
-- `okr_kr_milestones`：里程碑（id, kr_id, description, completed, created_at）
+
+**OKR：**
+- `okr_cycles`：周期（id, cycle_key UNIQUE, status∈{brainstorming,planning,active,closed}, created_by, created_at）
+- `okr_objectives`：目标 O（id, cycle_id FK, title, description, status∈{draft,approved,rejected}, proposed_by, created_at）
+- `okr_key_results`：关键结果 KR（id, objective_id FK, loginname FK, title, description, progress 0–100, status∈{active,pending_edit}, pending_title, pending_description, created_at）
+- `okr_kr_milestones`：里程碑（id, kr_id FK, description, created_at）
+
+**LLM 追踪与项目管理（ZGantt）：**
+- `llm_calls`：LLM 调用追踪（id, request_id UNIQUE, session_id, loginname, model, prompt, response, status∈{success,error}, token_usage, error, requested_at）；prompt/token_usage 存 JSON 字符串
+- `zgantts`：项目（id, name, status∈{active,closed}, start_date 建项日不可变, created_by, closed_at, created_at）
+- `zgantt_members`：项目成员（id, zgantt_id, loginname, status∈{active,departed}, departed_at, created_at），UNIQUE(zgantt_id, loginname)；永不删除，离组=departed，重新加入=复活
+- `work_groups`：工作组（id, zgantt_id, name, created_by, created_at）
+- `work_items`：工作项（id, group_id, zgantt_id 冗余便于单表扫描, title, owner, start_date, end_date, summary, created_at）；end_date NULL=进行中，非空=已完成（此时 summary 必填）
+- `zgantt_attendance`：项目考勤（id, zgantt_id, loginname, date, att_type∈{half,full,overtime}, created_at），UNIQUE(zgantt_id, loginname, date)
+
+**存量库迁移：** 老库（UTC 默认值 + 补丁触发器结构）用 `scripts/rebuild_schema.py` 一次性重建（改名临时表→按最新 DDL 重建→拷回→删临时表；自动备份，外键/行数/完整性校验通过才提交）。
 
 ## Key API Endpoints
 

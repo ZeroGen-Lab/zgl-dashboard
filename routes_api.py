@@ -36,7 +36,9 @@ def _resolve_account(data):
                 raise ValueError('卡片未绑定账号，请先绑定')
             if loginname is not None and loginname != card['loginname']:
                 raise ValueError('loginname 与卡片所属账号不一致')
-            loginname = card['loginname']
+            # card 行的 loginname 外键保证 users 行存在，无需再查。
+            return card['loginname'], uid
+        # 纯 loginname 入参没有外键背书，必须显式确认账号存在。
         if not conn.execute('SELECT 1 FROM users WHERE loginname=?', (loginname,)).fetchone():
             raise ValueError('用户账号不存在。')
     return loginname, uid
@@ -55,7 +57,7 @@ def checkin():
         uid = _text(data, 'uid')
         timestamp = data.get('timestamp', datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
         if not isinstance(timestamp, str):
-            raise ValueError('timestamp 必须是 YYYY-MM-DD HH:MM:SS 格式')
+            raise ValueError('timestamp 必须是 str')
         try:
             timestamp = datetime.strptime(timestamp, '%Y-%m-%d %H:%M:%S').strftime('%Y-%m-%d %H:%M:%S')
         except ValueError:
@@ -68,7 +70,8 @@ def checkin():
             # 归属查询与写入在同一写事务，避免期间被解绑/改绑。
             conn.execute('BEGIN IMMEDIATE')
             card = conn.execute(
-                'SELECT loginname FROM user_cards WHERE uid=?', (uid,)).fetchone()
+                'SELECT loginname FROM user_cards WHERE uid=?', (uid,)
+            ).fetchone()
             loginname = card['loginname'] if card else None
             conn.execute(
                 'INSERT INTO sign_ins (loginname, card_uid, timestamp) VALUES (?, ?, ?)',

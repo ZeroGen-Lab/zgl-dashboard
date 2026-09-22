@@ -3,8 +3,7 @@
 .users.txt
 
 # SQLite 数据库
-attendance.db
-attendance_pre.db
+attendance*.db
 
 # Python
 __pycache__/
@@ -12,3 +11,6 @@ __pycache__/
 
 # Claude
 .claude/*
+
+# Scripts
+scripts/*
