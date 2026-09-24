@@ -31,16 +31,11 @@ def index():
         member['cards'] = cards_by_user.get(member['loginname'], [])
         member['can_manage_cards'] = member['loginname'] == session['user']
 
-    # 当前没有绑定关系的卡片仅展示近3天刷卡；历史签到是否保留账号归属，
-    # 不影响卡片作为“未绑定卡”重新出现。
+    # 未归属签到只展示不删除，仅显示近3天刷卡，避免列表无限累积。
     unbound_cards = conn.execute('''
         SELECT s.card_uid AS uid, MAX(s.timestamp) AS last_time
         FROM sign_ins s
-        WHERE s.card_uid IS NOT NULL AND s.card_uid != ''
-          AND s.timestamp >= datetime('now','-3 days')
-          AND NOT EXISTS (
-              SELECT 1 FROM user_cards c WHERE c.uid = s.card_uid
-          )
+        WHERE s.loginname IS NULL AND s.timestamp >= datetime('now','-3 days')
         GROUP BY s.card_uid ORDER BY last_time DESC
     ''').fetchall()
 
@@ -116,10 +111,6 @@ def delete_card():
     if binding_id is None or binding_id <= 0:
         flash('缺少有效的卡片绑定编号。')
         return redirect(url_for('dashboard.index'))
-    if history_action not in ('preserve', 'release'):
-        flash('请选择是否保留该卡的历史签到记录。')
-        return redirect(url_for('dashboard.index'))
-
     conn = get_db_connection()
     try:
         # 解绑和可选的归属清除处于同一写事务，与签到写入互斥。
