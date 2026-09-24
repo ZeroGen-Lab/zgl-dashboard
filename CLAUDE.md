@@ -58,7 +58,7 @@ SQLite（`attendance.db` / `attendance_pre.db`），19 张表由 `db.py: ensure_
 **身份与卡片：**
 - `users`：账号（loginname PK, name, email）。email 全局唯一（UNIQUE，允许多行 NULL）；**登录即建档**（name 以登录名占位），姓名/邮箱仅本人经 `/update_profile` 修改
 - `user_cards`：卡片绑定（id, uid UNIQUE, loginname FK users）；一人可多卡，一卡只属于一人
-- `sign_ins`：签到记录（id, loginname FK 可空, card_uid, timestamp）。归属在落库时按当时绑定解析；未绑定卡 loginname 为 NULL。**绑定认领该卡全部 NULL 记录，解绑将其归属置空**（记录永不删除，重新绑定可再认领）
+- `sign_ins`：签到记录（id, loginname FK 可空, card_uid, timestamp）。归属在落库时按当时绑定解析；未绑定卡 loginname 为 NULL。绑定认领该卡全部 NULL 记录；解绑时由用户选择保留原账号归属，或将该卡历史签到归属置空（签到行永不删除，置空后重新绑定可再认领）
 
 **工作计划/日报/月报：**
 - `weekly_plans`：每周计划（id, loginname, week_key, content, submitted_at），UNIQUE(loginname, week_key)

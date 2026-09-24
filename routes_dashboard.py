@@ -105,15 +105,15 @@ def bind():
 @dashboard_bp.route('/delete_card', methods=['POST'])
 @login_required
 def delete_card():
-    """解绑卡片：删除卡片关系，该卡历史签到归属同步置空（记录保留，重新绑定可再认领）。"""
+    """解绑卡片；由本人选择保留历史归属，或将该卡的历史签到转为未归属。"""
     binding_id = request.form.get('binding_id', type=int)
+    history_action = request.form.get('history_action', '').strip()
     if binding_id is None or binding_id <= 0:
         flash('缺少有效的卡片绑定编号。')
         return redirect(url_for('dashboard.index'))
-
     conn = get_db_connection()
     try:
-        # 解绑与归属置空在同一写事务，与签到写入互斥，避免归属中途被改写。
+        # 解绑和可选的归属清除处于同一写事务，与签到写入互斥。
         conn.execute('BEGIN IMMEDIATE')
         card = conn.execute(
             'SELECT uid, loginname FROM user_cards WHERE id=?', (binding_id,)
@@ -127,14 +127,19 @@ def delete_card():
             conn.rollback()
             abort(403)
         conn.execute('DELETE FROM user_cards WHERE id=?', (binding_id,))
-        released = conn.execute(
-            'UPDATE sign_ins SET loginname=NULL WHERE card_uid=? AND loginname=?',
-            (card['uid'], card['loginname'])).rowcount
+        released = 0
+        if history_action == 'release':
+            # 只清除该卡属于当前账号的签到归属；签到行、卡号和时间仍保留。
+            released = conn.execute(
+                'UPDATE sign_ins SET loginname=NULL WHERE card_uid=? AND loginname=?',
+                (card['uid'], card['loginname'])).rowcount
         conn.commit()
-        if released:
-            flash(f'卡片已解绑，{released} 条历史签到转为未归属。')
+        if history_action == 'preserve':
+            flash('卡片已解绑，历史签到仍保留在当前账号下。')
+        elif released:
+            flash(f'卡片已解绑，{released} 条历史签到已转为未归属。')
         else:
-            flash('卡片已解绑。')
+            flash('卡片已解绑，该卡没有需要清除归属的历史签到。')
     finally:
         conn.close()
     return redirect(url_for('dashboard.index'))
