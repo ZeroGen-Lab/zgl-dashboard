@@ -212,15 +212,14 @@ def build_onsite_report_message():
         conn.close()
 
     required = month_weekday_count(today.year, today.month) - 2
-    week_label = f"{week_mon.strftime('%m/%d')} - {week_sun.strftime('%m/%d')}"
+    today_label = today.strftime('%Y-%m-%d')
     lines = [
-        f"## ZGL Onsite Report {week_label}",
-        "",
-        # f"本月（{today.year}-{today.month:02d}）onsite 要求 **{required} 天**"
+        f"### ZGL Onsite Report {today_label}",
+        f"Onsite requirement: {required} days"
         # f"（本月工作日 {required + 2} 天 - 2）",
         # "",
-        "姓名 | 上周Onsite | 本月Onsite | 本月要求 | 完成进度",
-        ":---:|:---:|:---:|:---:|:---:",
+        "Name | LastWeek | LastMon | Progress",
+        ":---:|:---:|:---:|:---",
     ]
     stats = sorted(
         (
@@ -237,8 +236,8 @@ def build_onsite_report_message():
             prog = f"{bar} 100% ✅"
         else:
             prog = f"{bar} {round(pct * 100)}%"
-        lines.append(f"{name} | {week_days}d | {month_days}d | {required}d | {prog}")
-    return f"ZGL Onsite Report {week_label}", "\n".join(lines)
+        lines.append(f"{name} | {week_days}d | {month_days}d | {prog}")
+    return f"ZGL Onsite Report {today_label}", "\n".join(lines)
 
 
 def generate_weekly_summary(week_offset=0):
