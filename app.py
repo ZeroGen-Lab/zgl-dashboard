@@ -35,19 +35,12 @@ def fmt_time(h):
     return f"{hh:02d}:{mm:02d}"
 
 
-def _weekly_summary_job():
-    """周一 18:30 自动推送周报到钉钉群"""
-    from helpers import compute_summary_week_range, generate_weekly_summary
+def _onsite_report_job():
+    """周一 18:30 推送 onsite 报告到钉钉群（上周 onsite + 本月达标进度，达标线=本月工作日-2）"""
+    from helpers import build_onsite_report_message
     from notifier import send_dingtalk_markdown
-    summary_monday, summary_sunday, _, _ = compute_summary_week_range(0)
-    date_range = f"{summary_monday.strftime('%m/%d')} - {summary_sunday.strftime('%m/%d')}"
-    summary_list = generate_weekly_summary(0)
-    lines = [f"## ZGL Dashboard Report {date_range}", "",
-             "Name | Onsite Days | Daily Comp | Weekly Plan", ":---:|:---:|:---:|:---:"]
-    for s in summary_list:
-        plan_icon = "✅" if s['has_weekly_plan'] else "NA"
-        lines.append(f"{s['name']} | {s['onsite_days']}d | {s['completion_count']} | {plan_icon}")
-    send_dingtalk_markdown(f"ZGL Dashboard Report {date_range}", "\n".join(lines))
+    title, text = build_onsite_report_message()
+    send_dingtalk_markdown(title, text)
 
 
 def _db_backup_job():
@@ -83,14 +76,14 @@ def _db_backup_job():
 
 # 备份任务仅在生产环境注册（pre 环境的数据不备份，以免覆盖生产备份）
 _need_backup = ENV == 'prod'
-_need_weekly = bool(DINGTALK_WEBHOOK_URL)
-if _need_backup or _need_weekly:
+_need_onsite_report = bool(DINGTALK_WEBHOOK_URL)
+if _need_backup or _need_onsite_report:
     from apscheduler.schedulers.background import BackgroundScheduler
     _scheduler = BackgroundScheduler()
     if _need_backup:
         _scheduler.add_job(_db_backup_job, 'cron', hour=6, minute=0)
-    if _need_weekly:
-        _scheduler.add_job(_weekly_summary_job, 'cron', day_of_week='mon', hour=18, minute=30)
+    if _need_onsite_report:
+        _scheduler.add_job(_onsite_report_job, 'cron', day_of_week='mon', hour=18, minute=30)
     _scheduler.start()
 
 if __name__ == '__main__':

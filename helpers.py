@@ -1,3 +1,4 @@
+import calendar
 import uuid
 from datetime import datetime, timedelta
 from db import get_db_connection
@@ -163,6 +164,81 @@ def compute_summary_week_range(week_offset=0):
     summary_sunday = summary_monday + timedelta(days=6)
     next_monday = summary_monday + timedelta(weeks=1)
     return summary_monday, summary_sunday, summary_monday.strftime('%Y%W'), next_monday.strftime('%Y%W')
+
+
+def month_weekday_count(year, month):
+    """自然月内周一~周五的天数（团队月度 onsite 考核基线，不考虑法定节假日）。"""
+    n_days = calendar.monthrange(year, month)[1]
+    return sum(1 for d in range(1, n_days + 1) if datetime(year, month, d).weekday() < 5)
+
+
+def build_onsite_report_message():
+    """构建周一钉钉通知：每人过去一周 onsite 天数 + 本月 onsite 达标进度。
+
+    - 过去一周 = 最近一个完整自然周（周一~周日），onsite 口径与周摘要页一致
+      （sign_ins 按 loginname 去重日期，未绑定卡不计入任何人）。
+    - 达标线 = 本月周一~周五天数 - 2（团队规则）；进度条 10 格 🟩/⬜，
+      达标显示 ✅，未达标附「差N天」。
+    - 名单取 users 表全部账号（无签到者计 0 天），按本月天数降序。
+    - 返回 (title, markdown_text)。
+    """
+    week_mon, week_sun, _, _ = compute_summary_week_range(0)
+    today = datetime.now().date()
+    month_start = today.replace(day=1)
+    next_month = datetime(today.year + (today.month == 12), today.month % 12 + 1, 1).date()
+    week_bounds = (week_mon.strftime('%Y-%m-%d 00:00:00'),
+                   (week_sun + timedelta(days=1)).strftime('%Y-%m-%d 00:00:00'))
+    month_bounds = (month_start.strftime('%Y-%m-%d 00:00:00'),
+                    next_month.strftime('%Y-%m-%d 00:00:00'))
+
+    conn = get_db_connection()
+    try:
+        users = conn.execute(
+            "SELECT u.loginname, u.name "
+            "FROM users u JOIN sign_ins s ON u.loginname = s.loginname "
+            "WHERE s.timestamp >= date('now','-30 days')"
+            "GROUP BY u.loginname, u.name").fetchall()
+
+        def _onsite_map(start, end):
+            rows = conn.execute(
+                "SELECT loginname, COUNT(DISTINCT date(timestamp)) AS days FROM sign_ins "
+                "WHERE loginname IS NOT NULL AND timestamp >= ? AND timestamp < ? GROUP BY loginname",
+                (start, end)).fetchall()
+            return {r['loginname']: r['days'] for r in rows}
+
+        week_map = _onsite_map(*week_bounds)
+        month_map = _onsite_map(*month_bounds)
+    finally:
+        conn.close()
+
+    required = month_weekday_count(today.year, today.month) - 2
+    week_label = f"{week_mon.strftime('%m/%d')} - {week_sun.strftime('%m/%d')}"
+    lines = [
+        f"## ZGL Onsite Report {week_label}",
+        "",
+        # f"本月（{today.year}-{today.month:02d}）onsite 要求 **{required} 天**"
+        # f"（本月工作日 {required + 2} 天 - 2）",
+        # "",
+        "姓名 | 上周Onsite | 本月Onsite | 本月要求 | 完成进度",
+        ":---:|:---:|:---:|:---:|:---:",
+    ]
+    stats = sorted(
+        (
+            (u['name'] or u['loginname'], week_map.get(u['loginname'], 0), 
+             month_map.get(u['loginname'], 0)) for u in users
+        ),
+        key=lambda x: x[2], reverse=True)
+    for name, week_days, month_days in stats:
+        pct = month_days / required if required else 1.0
+        # 进度条与达标状态保持一致：未达标最多亮 9 格，避免「满格却差N天」的矛盾显示
+        filled = min(10 if month_days >= required else 9, round(pct * 10))
+        bar = '🟩' * filled + '⬜' * (10 - filled)
+        if month_days >= required:
+            prog = f"{bar} 100% ✅"
+        else:
+            prog = f"{bar} {round(pct * 100)}%"
+        lines.append(f"{name} | {week_days}d | {month_days}d | {required}d | {prog}")
+    return f"ZGL Onsite Report {week_label}", "\n".join(lines)
 
 
 def generate_weekly_summary(week_offset=0):

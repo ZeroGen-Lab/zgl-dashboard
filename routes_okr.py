@@ -9,10 +9,10 @@ okr_bp = Blueprint('okr', __name__, url_prefix='/okr')
 # --- 辅助函数 ---
 
 def get_current_cycle_key():
-    """根据当前月份判断学期。3-8月=Spring，9-2月=Autumn。"""
+    """根据当前月份判断学期。4-9月=Spring，10-3月=Autumn。"""
     today = datetime.now()
     year = str(today.year)
-    season = 'Spring' if 3 <= today.month <= 8 else 'Autumn'
+    season = 'Spring' if 4 <= today.month <= 9 else 'Autumn'
     return year, season, f"{year}-{season}"
 
 
@@ -20,18 +20,13 @@ def get_available_cycle_keys():
     """返回当前周期 + 前后各一个周期，供下拉选择。"""
     today = datetime.now()
     current_year = today.year
-    current_season = 'Spring' if 3 <= today.month <= 8 else 'Autumn'
+    current_season = 'Spring' if 4 <= today.month <= 9 else 'Autumn'
     current_key = f"{current_year}-{current_season}"
 
-    if current_season == 'Spring':
-        prev = f"{current_year - 1}-Autumn"
-    else:
-        prev = f"{current_year}-Spring"
-
-    if current_season == 'Autumn':
-        nxt = f"{current_year + 1}-Spring"
-    else:
-        nxt = f"{current_year}-Autumn"
+    prev = f"{current_year - 1}-Autumn" if current_season == 'Spring' \
+        else f"{current_year}-Spring"
+    nxt = f"{current_year}-Autumn" if current_season == 'Spring' \
+        else f"{current_year + 1}-Spring"
 
     return [
         {'cycle_key': k, 'label': k, 'is_current': k == current_key}
