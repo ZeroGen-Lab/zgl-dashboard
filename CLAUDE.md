@@ -27,7 +27,7 @@ sudo python3 checkin_usb.py
 
 **端侧-服务端分离 + 服务端 Blueprint 模块化架构：**
 
-- **`app.py`**（入口）：创建 Flask app，加载配置，注册 5 个 Blueprint，注册 `fmt_time` Jinja 过滤器（浮点小时 → `"HH:MM"`，如 `6.5` → `06:30`，用于 booking 半点时间显示），启动服务；若配置了钉钉 webhook 则启动 APScheduler 周一定时推送周报
+- **`app.py`**（入口）：创建 Flask app，加载配置，注册 5 个 Blueprint，注册 `fmt_time` Jinja 过滤器（浮点小时 → `"HH:MM"`，如 `6.5` → `06:30`，用于 booking 半点时间显示），启动服务；若配置了钉钉 webhook 则启动 APScheduler 周一 18:30 定时推送 onsite 报告（每人上周 onsite + 本月 onsite 达标进度，达标线=本月工作日-2，进度条展示）
 - **`config.py`**：从 `.config.yml` 加载配置，导出模块级全局变量（`DB_PATH`, `API_SECRET`, `ALLOWED_CHECKIN_IPS`, `SECRET_KEY`, `DINGTALK_WEBHOOK_URL`, `DINGTALK_SECRET`）
 - **`db.py`**：数据库连接（`get_db_connection()`）和 19 张表的初始化（`ensure_tables()`）
 - **`auth.py`**：认证基础设施——用户集（`.users.txt`）、HMAC token 生成/验证、装饰器（`login_required`, `token_required`, `checkin_ip_required`）

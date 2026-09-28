@@ -191,9 +191,9 @@ def stats():
         SELECT
             s.loginname,
             COALESCE(NULLIF(u.name, ''), u.loginname) as name,
-            COUNT(DISTINCT CASE WHEN s.timestamp >= date('now','-15 days') THEN date(s.timestamp) END) as d15,
-            COUNT(DISTINCT CASE WHEN s.timestamp >= date('now','-60 days') THEN date(s.timestamp) END) as d60,
-            COUNT(DISTINCT CASE WHEN s.timestamp >= date('now','-180 days') THEN date(s.timestamp) END) as d180,
+            COUNT(DISTINCT CASE WHEN s.timestamp > date('now','-15 days') THEN date(s.timestamp) END) as d15,
+            COUNT(DISTINCT CASE WHEN s.timestamp > date('now','-60 days') THEN date(s.timestamp) END) as d60,
+            COUNT(DISTINCT CASE WHEN s.timestamp > date('now','-180 days') THEN date(s.timestamp) END) as d180,
             COUNT(DISTINCT CASE WHEN strftime('%Y-%m',s.timestamp) = strftime('%Y-%m','now','start of month','-1 month') THEN date(s.timestamp) END) as last_month
         FROM sign_ins s
         JOIN users u ON s.loginname = u.loginname
