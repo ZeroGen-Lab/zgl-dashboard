@@ -27,9 +27,9 @@ sudo python3 checkin_usb.py
 
 **端侧-服务端分离 + 服务端 Blueprint 模块化架构：**
 
-- **`app.py`**（入口）：创建 Flask app，加载配置，注册 5 个 Blueprint，注册 `fmt_time` Jinja 过滤器（浮点小时 → `"HH:MM"`，如 `6.5` → `06:30`，用于 booking 半点时间显示），启动服务；若配置了钉钉 webhook 则启动 APScheduler 周一 18:30 定时推送 onsite 报告（每人上周 onsite + 本月 onsite 达标进度，达标线=本月工作日-2，进度条展示）
+- **`app.py`**（入口）：创建 Flask app，加载配置，注册 7 个 Blueprint，注册 `fmt_time` Jinja 过滤器（浮点小时 → `"HH:MM"`，如 `6.5` → `06:30`，用于 booking 半点时间显示），启动服务；若配置了钉钉 webhook 则启动 APScheduler 周一 18:30 定时推送 onsite 报告（每人上周 onsite + 本月 onsite 达标进度，达标线=本月工作日-2，进度条展示）
 - **`config.py`**：从 `.config.yml` 加载配置，导出模块级全局变量（`DB_PATH`, `API_SECRET`, `ALLOWED_CHECKIN_IPS`, `SECRET_KEY`, `DINGTALK_WEBHOOK_URL`, `DINGTALK_SECRET`）
-- **`db.py`**：数据库连接（`get_db_connection()`）和 19 张表的初始化（`ensure_tables()`）
+- **`db.py`**：数据库连接（`get_db_connection()`）和 21 张表的初始化（`ensure_tables()`）
 - **`auth.py`**：认证基础设施——用户集（`.users.txt`）、HMAC token 生成/验证、装饰器（`login_required`, `token_required`, `checkin_ip_required`）
 - **`helpers.py`**：业务辅助函数（`compute_week_key`, `compute_upcoming_instances`, `is_instance_expired`, `compute_summary_week_range`, `generate_weekly_summary`）。`is_instance_expired(slot, date)` 判断 booking 实例是否已过结束时间（`now ≥ 当日 + end_hour`），用于实效只读判定
 - **`notifier.py`**：钉钉群机器人消息推送（`send_dingtalk_markdown`），支持 HMAC-SHA256 加签
@@ -38,6 +38,8 @@ sudo python3 checkin_usb.py
 - **`routes_api.py`**：Blueprint（url_prefix='/api'）——签到、每周计划、每日完成 API
 - **`routes_auth.py`**：Blueprint——登录/登出
 - **`routes_okr.py`**：Blueprint（url_prefix='/okr'）——OKR 管理
+- **`routes_zgantt.py`**：Blueprint（url_prefix='/zgantt'）——ZGantt 项目管理（项目甘特图 + 项目考勤）
+- **`routes_academic_grant.py`**：Blueprint（url_prefix='/academic_grant'）——学术交流经费（AGrant）管理：管理员授予/调整额度、学生申报使用、同学间转赠（手续费 10%）、毕业冻结
 - **`checkin_usb.py`**（端侧/树莓派）：通过 `evdev` 读取 USB IC 读卡器输入，刷卡后先写本地 SQLite，再 HTTP POST 同步到服务端（请求头带 `Authorization: Bearer <HMAC-token>`）。本地表有 `synced` 字段追踪同步状态（0=未同步, 1=已同步）。`retry_sync` 每日自动重试7天内未同步记录（`threading.Timer(86400)`）。
 
 **数据同步流：** 读卡器 → 本地 DB 写入 → HTTP POST `/api/checkin`（带 HMAC token） → 服务端 DB 写入
@@ -53,7 +55,7 @@ sudo python3 checkin_usb.py
 
 ## Database
 
-SQLite（`attendance.db` / `attendance_pre.db`），19 张表由 `db.py: ensure_tables()` 创建。所有"行创建时刻"型时间戳列的默认值统一为 `datetime('now','localtime')`（服务器本地时间）；业务时刻/生命周期时刻列（如 sign_ins.timestamp、closed_at、departed_at）无默认值。数据库连接开启外键校验（`PRAGMA foreign_keys=ON`）。
+SQLite（`attendance.db` / `attendance_pre.db`），21 张表由 `db.py: ensure_tables()` 创建。所有"行创建时刻"型时间戳列的默认值统一为 `datetime('now','localtime')`（服务器本地时间）；业务时刻/生命周期时刻列（如 sign_ins.timestamp、closed_at、departed_at）无默认值。数据库连接开启外键校验（`PRAGMA foreign_keys=ON`）。
 
 **身份与卡片：**
 - `users`：账号（loginname PK, name, email）。email 全局唯一（UNIQUE，允许多行 NULL）；**登录即建档**（name 以登录名占位），姓名/邮箱仅本人经 `/update_profile` 修改
@@ -84,6 +86,10 @@ SQLite（`attendance.db` / `attendance_pre.db`），19 张表由 `db.py: ensure_
 - `work_items`：工作项（id, group_id, zgantt_id 冗余便于单表扫描, title, owner, start_date, end_date, summary, created_at）；end_date NULL=进行中，非空=已完成（此时 summary 必填）
 - `zgantt_attendance`：项目考勤（id, zgantt_id, loginname, date, att_type∈{half,full,overtime}, created_at），UNIQUE(zgantt_id, loginname, date)
 
+**学术交流经费（AGrant）：**
+- `academic_grant_accounts`：经费账户（loginname PK, balance INTEGER 元 CHECK≥-500（允许透支至 -500 元）, status∈{active,graduated}, graduated_at, created_at）。首次授予即开户（仅限已完成姓名绑定的用户）；毕业仅作用于本页面：冻结一切额度变动（授予/调整/申报/转出/转入），记录保留可见，可撤销（graduated_at 置空复活，同 zgantt_members.departed 模式）
+- `academic_grant_records`：经费流水（id, loginname, record_type∈{grant,adjust,usage,transfer_out,transfer_in}, amount 有符号增量元 CHECK≠0, note, related_loginname 转赠对方, created_by, created_at）；只增不改不删，对账恒等式：每账户 SUM(amount)==balance。grant=正（授予，/grant 仅正向）/adjust=负（管理员调整扣减，/adjust 输入正数落负账）/usage=负（本人申报）/transfer_out=负、transfer_in=正（转赠实到额）；转赠手续费 10%（received=(amount*9+5)//10，实收 90% 四舍五入到整数），手续费不入账即自然损耗；转出额与调整扣减额均不得超过当前余额（两者不透支，透支下限 -500 仅适用于申报使用）
+
 **存量库迁移：** 老库（UTC 默认值 + 补丁触发器结构）用 `scripts/rebuild_schema.py` 一次性重建（改名临时表→按最新 DDL 重建→拷回→删临时表；自动备份，外键/行数/完整性校验通过才提交）。
 
 ## Key API Endpoints
@@ -103,6 +109,13 @@ SQLite（`attendance.db` / `attendance_pre.db`），19 张表由 `db.py: ensure_
 | `/booking/book/<slot_id>/<instance_date>` | POST | login | 预约某个时段实例（已结束的实例会被拒绝） |
 | `/booking/cancel/<booking_id>` | POST | login | 取消我的预约 |
 | `/booking/cancel_slot/<slot_id>` | POST | login | 取消我发布的时段 |
+| `/academic_grant/` | GET | login | AGrant 经费主页（每人卡片：余额徽章高亮 + 流水倒序；?scope=active 默认/all 含毕业） |
+| `/academic_grant/grant` | POST | login + admin | 授予额度（仅正数，唯一追加入口）；首次授予即开户，仅限已完成姓名绑定的用户 |
+| `/academic_grant/adjust/<loginname>` | POST | login + admin | 调整扣减额度（仅负向：输入正数扣减额，落账为负 adjust 流水，不得超过当前余额） |
+| `/academic_grant/usage` | POST | login | 本人申报使用（amount 正整数 + note 必填），直接扣减，无需审批 |
+| `/academic_grant/transfer` | POST | login | 转赠额度（to + amount；手续费 10%，received=(amount*9+5)//10 四舍五入，转出额不得超过当前余额） |
+| `/academic_grant/graduate/<loginname>` | POST | login + admin | 标记毕业（版块冻结只读，记录保留） |
+| `/academic_grant/revoke/<loginname>` | POST | login + admin | 撤销毕业（恢复操作） |
 | `/api/checkin` | POST | token + IP白名单 | JSON `{"uid", "timestamp"}` 签到同步接口 |
 | `/api/weekly_plan` | POST | token | JSON `{"uid", "content"}` 每周计划（周六至周一中午12点） |
 | `/api/daily_completion` | POST | token | JSON `{"uid", "date", "content"}` 每日完成情况 |
@@ -117,6 +130,8 @@ SQLite（`attendance.db` / `attendance_pre.db`），19 张表由 `db.py: ensure_
 - `templates/booking.html` — 预约广场主页（一次性/长期卡片 + 我的预约/发布；失效实例显示「已结束」只读、发布者可编辑）
 - `templates/booking_publish.html` — 发布/编辑预约时段表单（双用，经 `fmt_time` 渲染 6:00–22:00 半点时间下拉）
 - `templates/weekly_summary.html` — 周报摘要页（出勤/日报/周计划表格 + 翻页）
+- `templates/zgantt.html` — ZGantt 项目页（项目/成员管理 + 甘特图 + 考勤填报）
+- `templates/academic_grant.html` — AGrant 经费页（余额徽章高亮 + 每人流水倒序卡片 + 内联展开表单 + 毕业 confirm modal，仿 okr.html）
 
 ## Configuration
 
@@ -140,6 +155,9 @@ SQLite（`attendance.db` / `attendance_pre.db`），19 张表由 `db.py: ensure_
 - `routes_dashboard.py` — Blueprint: 首页/绑定/统计/详情
 - `routes_booking.py` — Blueprint: 预约广场
 - `routes_api.py` — Blueprint: 签到/计划/完成 API
+- `routes_okr.py` — Blueprint: OKR 管理
+- `routes_zgantt.py` — Blueprint: ZGantt 项目管理
+- `routes_academic_grant.py` — Blueprint: 学术交流经费（AGrant）管理
 - `checkin_usb.py` — 树莓派刷卡客户端
 - `templates/` — Jinja2 模板
 - `environment.yml` — Conda 环境定义（`flask_app`，Python 3.10）
