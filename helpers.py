@@ -215,10 +215,10 @@ def build_onsite_report_message():
     today_label = today.strftime('%Y-%m-%d')
     lines = [
         f"### ZGL Onsite Report {today_label}",
-        f"Onsite requirement: {required} days"
+        f"This month requires **{required}** onsite days.",
         # f"（本月工作日 {required + 2} 天 - 2）",
-        # "",
-        "Name | LastWeek | LastMon | Progress",
+        "",
+        "Name | LastWeek | ThisMon | ThisMon Progress",
         ":---:|:---:|:---:|:---",
     ]
     stats = sorted(
