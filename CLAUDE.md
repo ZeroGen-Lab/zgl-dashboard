@@ -39,7 +39,7 @@ sudo python3 checkin_usb.py
 - **`routes_auth.py`**：Blueprint——登录/登出
 - **`routes_okr.py`**：Blueprint（url_prefix='/okr'）——OKR 管理
 - **`routes_zgantt.py`**：Blueprint（url_prefix='/zgantt'）——ZGantt 项目管理（项目甘特图 + 项目考勤）
-- **`routes_academic_grant.py`**：Blueprint（url_prefix='/academic_grant'）——学术交流经费（AGrant）管理：管理员授予/调整额度、学生申报使用、同学间转赠（手续费 10%）、毕业冻结
+- **`routes_agrant.py`**：Blueprint（url_prefix='/agrant'）——学术交流经费（AGrant）管理：管理员页头表单授予/追回额度（两个金额输入互斥，只能填一个）、学生申报使用、同学间转赠（手续费 10%）、毕业冻结
 - **`checkin_usb.py`**（端侧/树莓派）：通过 `evdev` 读取 USB IC 读卡器输入，刷卡后先写本地 SQLite，再 HTTP POST 同步到服务端（请求头带 `Authorization: Bearer <HMAC-token>`）。本地表有 `synced` 字段追踪同步状态（0=未同步, 1=已同步）。`retry_sync` 每日自动重试7天内未同步记录（`threading.Timer(86400)`）。
 
 **数据同步流：** 读卡器 → 本地 DB 写入 → HTTP POST `/api/checkin`（带 HMAC token） → 服务端 DB 写入
@@ -88,7 +88,7 @@ SQLite（`attendance.db` / `attendance_pre.db`），21 张表由 `db.py: ensure_
 
 **学术交流经费（AGrant）：**
 - `academic_grant_accounts`：经费账户（loginname PK, balance INTEGER 元 CHECK≥-500（允许透支至 -500 元）, status∈{active,graduated}, graduated_at, created_at）。首次授予即开户（仅限已完成姓名绑定的用户）；毕业仅作用于本页面：冻结一切额度变动（授予/调整/申报/转出/转入），记录保留可见，可撤销（graduated_at 置空复活，同 zgantt_members.departed 模式）
-- `academic_grant_records`：经费流水（id, loginname, record_type∈{grant,adjust,usage,transfer_out,transfer_in}, amount 有符号增量元 CHECK≠0, note, related_loginname 转赠对方, created_by, created_at）；只增不改不删，对账恒等式：每账户 SUM(amount)==balance。grant=正（授予，/grant 仅正向）/adjust=负（管理员调整扣减，/adjust 输入正数落负账）/usage=负（本人申报）/transfer_out=负、transfer_in=正（转赠实到额）；转赠手续费 10%（received=(amount*9+5)//10，实收 90% 四舍五入到整数），手续费不入账即自然损耗；转出额与调整扣减额均不得超过当前余额（两者不透支，透支下限 -500 仅适用于申报使用）
+- `academic_grant_records`：经费流水（id, loginname, record_type∈{grant,adjust,usage,transfer_out,transfer_in}, amount 有符号增量元 CHECK≠0, note, related_loginname 转赠对方, created_by, created_at）；只增不改不删，对账恒等式：每账户 SUM(amount)==balance。grant=正（授予，页头表单「授予金额」仅正向）/adjust=负（管理员追回扣减，页头表单「追回金额」输入正数落负账）/usage=负（本人申报）/transfer_out=负、transfer_in=正（转赠实到额）；转赠手续费 10%（received=(amount*9+5)//10，实收 90% 四舍五入到整数），手续费不入账即自然损耗；转出额与追回扣减额均不得超过当前余额（两者不透支，透支下限 -500 仅适用于申报使用）
 
 **存量库迁移：** 老库（UTC 默认值 + 补丁触发器结构）用 `scripts/rebuild_schema.py` 一次性重建（改名临时表→按最新 DDL 重建→拷回→删临时表；自动备份，外键/行数/完整性校验通过才提交）。
 
@@ -109,13 +109,13 @@ SQLite（`attendance.db` / `attendance_pre.db`），21 张表由 `db.py: ensure_
 | `/booking/book/<slot_id>/<instance_date>` | POST | login | 预约某个时段实例（已结束的实例会被拒绝） |
 | `/booking/cancel/<booking_id>` | POST | login | 取消我的预约 |
 | `/booking/cancel_slot/<slot_id>` | POST | login | 取消我发布的时段 |
-| `/academic_grant/` | GET | login | AGrant 经费主页（每人卡片：余额徽章高亮 + 流水倒序；?scope=active 默认/all 含毕业） |
-| `/academic_grant/grant` | POST | login + admin | 授予额度（仅正数，唯一追加入口）；首次授予即开户，仅限已完成姓名绑定的用户 |
-| `/academic_grant/adjust/<loginname>` | POST | login + admin | 调整扣减额度（仅负向：输入正数扣减额，落账为负 adjust 流水，不得超过当前余额） |
-| `/academic_grant/usage` | POST | login | 本人申报使用（amount 正整数 + note 必填），直接扣减，无需审批 |
-| `/academic_grant/transfer` | POST | login | 转赠额度（to + amount；手续费 10%，received=(amount*9+5)//10 四舍五入，转出额不得超过当前余额） |
-| `/academic_grant/graduate/<loginname>` | POST | login + admin | 标记毕业（版块冻结只读，记录保留） |
-| `/academic_grant/revoke/<loginname>` | POST | login + admin | 撤销毕业（恢复操作） |
+| `/agrant/` | GET | login | AGrant 经费主页（每人卡片：余额徽章高亮 + 流水倒序；?scope=active 默认/all 含毕业） |
+| `/agrant/grant` | POST | login + admin | 授予额度（页头管理员表单「授予金额」，仅正数，唯一追加入口）；首次授予即开户，仅限已完成姓名绑定的用户 |
+| `/agrant/adjust` | POST | login + admin | 追回扣减额度（页头管理员表单「追回金额」+ loginname；仅负向：输入正数追回额，落账为负 adjust 流水，不得超过当前余额）。与 /grant 共用同一表单，两个金额互斥（前端+后端双重校验） |
+| `/agrant/usage` | POST | login | 本人申报使用（amount 正整数 + note 必填），直接扣减，无需审批 |
+| `/agrant/transfer` | POST | login | 转赠额度（to + amount；手续费 10%，received=(amount*9+5)//10 四舍五入，转出额不得超过当前余额） |
+| `/agrant/graduate/<loginname>` | POST | login + admin | 标记毕业（版块冻结只读，记录保留） |
+| `/agrant/revoke/<loginname>` | POST | login + admin | 撤销毕业（恢复操作） |
 | `/api/checkin` | POST | token + IP白名单 | JSON `{"uid", "timestamp"}` 签到同步接口 |
 | `/api/weekly_plan` | POST | token | JSON `{"uid", "content"}` 每周计划（周六至周一中午12点） |
 | `/api/daily_completion` | POST | token | JSON `{"uid", "date", "content"}` 每日完成情况 |
@@ -131,7 +131,7 @@ SQLite（`attendance.db` / `attendance_pre.db`），21 张表由 `db.py: ensure_
 - `templates/booking_publish.html` — 发布/编辑预约时段表单（双用，经 `fmt_time` 渲染 6:00–22:00 半点时间下拉）
 - `templates/weekly_summary.html` — 周报摘要页（出勤/日报/周计划表格 + 翻页）
 - `templates/zgantt.html` — ZGantt 项目页（项目/成员管理 + 甘特图 + 考勤填报）
-- `templates/academic_grant.html` — AGrant 经费页（余额徽章高亮 + 每人流水倒序卡片 + 内联展开表单 + 毕业 confirm modal，仿 okr.html）
+- `templates/agrant.html` — AGrant 经费页（余额徽章高亮 + 每人流水倒序卡片 + 管理员页头「授予/追回」合一表单（互斥双金额输入，JS 按所填项切换提交目标）+ 申报/转赠内联展开表单 + 毕业 confirm modal，仿 okr.html）
 
 ## Configuration
 
@@ -157,7 +157,7 @@ SQLite（`attendance.db` / `attendance_pre.db`），21 张表由 `db.py: ensure_
 - `routes_api.py` — Blueprint: 签到/计划/完成 API
 - `routes_okr.py` — Blueprint: OKR 管理
 - `routes_zgantt.py` — Blueprint: ZGantt 项目管理
-- `routes_academic_grant.py` — Blueprint: 学术交流经费（AGrant）管理
+- `routes_agrant.py` — Blueprint: 学术交流经费（AGrant）管理
 - `checkin_usb.py` — 树莓派刷卡客户端
 - `templates/` — Jinja2 模板
 - `environment.yml` — Conda 环境定义（`flask_app`，Python 3.10）

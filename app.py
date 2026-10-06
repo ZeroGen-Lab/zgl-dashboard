@@ -7,7 +7,7 @@ from routes_booking import booking_bp
 from routes_api import api_bp
 from routes_okr import okr_bp
 from routes_zgantt import zgantt_bp
-from routes_academic_grant import academic_grant_bp
+from routes_agrant import agrant_bp
 
 app = Flask(__name__)
 app.config.update(flask_config)
@@ -21,7 +21,7 @@ app.register_blueprint(booking_bp)
 app.register_blueprint(api_bp)
 app.register_blueprint(okr_bp)
 app.register_blueprint(zgantt_bp)
-app.register_blueprint(academic_grant_bp)
+app.register_blueprint(agrant_bp)
 
 
 @app.template_filter('fmt_time')
