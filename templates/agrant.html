@@ -39,14 +39,14 @@
     .submit-form > input.form-control, .submit-form > select.form-select { flex: 1 1 auto; }
     .submit-form > button { flex: 0 0 auto; }
     .submit-form input[name="amount"] { flex: 0 0 auto; width: 140px; }
-    /* 管理员授予表单：整行布局 —— 下拉 20% + 显式留白 30% + 授予金额，尾部留空；说明/提交换行 */
-    .grant-pair { display: flex; gap: 8px; align-items: center; flex: 1 1 100%; min-width: 0; }
+    /* 管理员页头表单：整行布局 —— 下拉 20% + 留白 + 授予金额 + 留白 + 追回金额；说明/提交换行 */
+    .grant-pair { display: flex; gap: 8px; align-items: center; flex: 1 1 100%; min-width: 0; flex-wrap: wrap; }
     .grant-pair > select.form-select { flex: 0 0 20%; min-width: 0; }
     .grant-gap { flex: 0 0 5%; }
     /* 金额输入通用：外部文字标签 + 彩色前缀输入组（+ 绿=流入 / - 红=流出） */
     .amount-label { flex: 0 0 auto; white-space: nowrap; color: #6c757d; font-size: 0.875rem; }
     .ag-amount { flex: 0 0 auto; width: 200px; }
-    .submit-form .ag-amount input[name="amount"] { flex: 1 1 auto; width: auto; }
+    .submit-form .ag-amount input[type="number"] { flex: 1 1 auto; width: auto; }
     /* 转出表单的手续费提示行（随表单展开显示，灰色小字） */
     .transfer-hint { flex: 1 1 100%; font-size: 0.8rem; color: #6c757d; }
     /* 转出表单的对方实收展示（只读，随输入实时计算 90% 四舍五入） */
@@ -67,7 +67,7 @@
 
 {% set TYPE_META = {
     'grant':         {'icon': 'bi-award',              'badge': 'bg-success',           'label': '授予'},
-    'adjust':        {'icon': 'bi-sliders',            'badge': 'bg-danger',            'label': '调整'},
+    'adjust':        {'icon': 'bi-sliders',            'badge': 'bg-danger',            'label': '追回'},
     'usage':         {'icon': 'bi-receipt',            'badge': 'bg-danger',            'label': '使用'},
     'transfer_out':  {'icon': 'bi-box-arrow-right',    'badge': 'bg-danger',            'label': '赠予'},
     'transfer_in':   {'icon': 'bi-box-arrow-in-right', 'badge': 'bg-success',           'label': '受赠'},
@@ -87,16 +87,16 @@
 </div>
 
 {% if is_admin %}
-<!-- 授予 / 调整（管理员）：首次授予即开户，仅限已完成姓名绑定的用户 -->
+<!-- 授予 / 追回（管理员）：首次授予即开户，仅限已完成姓名绑定的用户；两个金额互斥，只能填一个 -->
 <div class="card mb-3">
-    <div class="card-header"><i class="bi bi-award"></i> 授予经费（管理员）</div>
+    <div class="card-header"><i class="bi bi-award"></i> 授予/追回经费（管理员）</div>
     <div class="card-body">
         {% if grant_candidates %}
-        <form method="POST" action="{{ url_for('academic_grant.grant') }}" class="submit-form">
+        <form id="ag-grant-form" method="POST" action="{{ url_for('agrant.grant') }}" class="submit-form">
             <input type="hidden" name="scope" value="{{ scope }}">
             <div class="grant-pair">
                 <select name="loginname" class="form-select form-select-sm" required>
-                    <option value="" selected disabled hidden>请选择被授予成员</option>
+                    <option value="" selected disabled hidden>请选择成员</option>
                     {% for c in grant_candidates %}
                     <option value="{{ c.loginname }}">{{ c.label }}</option>
                     {% endfor %}
@@ -105,17 +105,26 @@
                 <span class="amount-label">授予金额</span>
                 <div class="input-group input-group-sm ag-amount">
                     <span class="input-group-text">+</span>
-                    <input name="amount" type="number" min="0" class="form-control" required
+                    <input name="grant_amount" type="number" min="0" class="form-control"
+                           placeholder="0">
+                </div>
+                <div class="grant-gap"></div>
+                <span class="amount-label">追回金额</span>
+                <div class="input-group input-group-sm ag-amount">
+                    <span class="input-group-text">-</span>
+                    <input name="revoke_amount" type="number" min="0" class="form-control"
                            placeholder="0">
                 </div>
             </div>
             <input name="note" class="form-control form-control-sm" maxlength="50" required
-                   placeholder="说明（如：入学授予 / 团队贡献追加）">
+                   placeholder="说明（如：入学授予 / 团队贡献追加 / 误操作追回）">
             <button class="btn btn-sm btn-outline-primary"><i class="bi bi-send"></i> 提交</button>
         </form>
         {% else %}
         <p class="text-muted mb-0">暂无可授予用户：需同学先登录并在成员页完成姓名绑定。</p>
         {% endif %}
+        {# 管理员「追回」前端余额校验数据：loginname -> 当前余额（未开户不在映射内） #}
+        <script>var AG_BALANCES = {{ balances|tojson }};</script>
     </div>
 </div>
 {% endif %}
@@ -174,17 +183,14 @@
             </button>
             {% endif %}
             {% if is_admin and active %}
-            <button type="button" class="btn btn-outline-warning" onclick="showAgAction('{{ acc.loginname }}', 'adjust')">
-                <i class="bi bi-sliders"></i> 调整
-            </button>
-            <form method="POST" action="{{ url_for('academic_grant.graduate', loginname=acc.loginname) }}" class="d-inline"
+            <form method="POST" action="{{ url_for('agrant.graduate', loginname=acc.loginname) }}" class="d-inline"
                   data-confirm="确定将 {{ acc.display }} 标记为毕业？毕业后其经费版块只读（记录保留），可撤销。">
                 <input type="hidden" name="scope" value="{{ scope }}">
                 <button class="btn btn-outline-secondary"><i class="bi bi-person-dash"></i> 标记毕业</button>
             </form>
             {% endif %}
             {% if is_admin and not active %}
-            <form method="POST" action="{{ url_for('academic_grant.revoke', loginname=acc.loginname) }}" class="d-inline"
+            <form method="POST" action="{{ url_for('agrant.revoke', loginname=acc.loginname) }}" class="d-inline"
                   data-confirm="确定撤销 {{ acc.display }} 的毕业标记？将恢复其经费操作。">
                 <input type="hidden" name="scope" value="{{ scope }}">
                 <button class="btn btn-outline-success"><i class="bi bi-arrow-counterclockwise"></i> 撤销毕业</button>
@@ -194,7 +200,7 @@
 
         {% if is_self and active %}
         <!-- 隐藏表单：申报使用 -->
-        <form id="ag-usage-{{ acc.loginname }}" method="POST" action="{{ url_for('academic_grant.usage') }}"
+        <form id="ag-usage-{{ acc.loginname }}" method="POST" action="{{ url_for('agrant.usage') }}"
               class="submit-form mt-2" style="display:none">
             <input type="hidden" name="scope" value="{{ scope }}">
             <span class="amount-label">使用金额</span>
@@ -210,7 +216,7 @@
             <div class="transfer-hint">申报允许透支500元额度，透支额度可通过他人转赠或者充值团队活动经费补齐。</div>
         </form>
         <!-- 隐藏表单：转赠额度 -->
-        <form id="ag-transfer-{{ acc.loginname }}" method="POST" action="{{ url_for('academic_grant.transfer') }}"
+        <form id="ag-transfer-{{ acc.loginname }}" method="POST" action="{{ url_for('agrant.transfer') }}"
               class="submit-form mt-2" style="display:none">
             <input type="hidden" name="scope" value="{{ scope }}">
             <select name="to" class="form-select form-select-sm to-select" required>
@@ -234,24 +240,6 @@
             <button class="btn btn-sm btn-outline-primary">转赠</button>
             <button type="button" class="btn btn-sm btn-link text-muted" onclick="cancelAgAction('{{ acc.loginname }}')">取消</button>
             <div class="transfer-hint">转出额不得超过当前余额；转出将收取 10% 手续费，对方实收转出额的 90%（四舍五入到整数）。</div>
-        </form>
-        {% endif %}
-
-        {% if is_admin and active %}
-        <!-- 隐藏表单：管理员调整（仅扣减，追加统一走页头「授予经费」表单） -->
-        <form id="ag-adjust-{{ acc.loginname }}" method="POST"
-              action="{{ url_for('academic_grant.adjust', loginname=acc.loginname) }}"
-              class="submit-form mt-2" style="display:none">
-            <input type="hidden" name="scope" value="{{ scope }}">
-            <span class="amount-label">调整（扣减）金额</span>
-            <div class="input-group input-group-sm ag-amount">
-                <span class="input-group-text">-</span>
-                <input name="amount" type="number" min="0" class="form-control" required
-                       placeholder="扣减额度" data-balance="{{ acc.balance }}">
-            </div>
-            <input name="note" class="form-control form-control-sm" maxlength="50" required placeholder="调整说明（如：纠错 / 回收）">
-            <button class="btn btn-sm btn-outline-warning">调整</button>
-            <button type="button" class="btn btn-sm btn-link text-muted" onclick="cancelAgAction('{{ acc.loginname }}')">取消</button>
         </form>
         {% endif %}
         {% endif %}
@@ -290,7 +278,7 @@ function showAgAction(ln, action) {
     if (form) form.style.display = 'flex';
 }
 function cancelAgAction(ln) {
-    ['usage', 'transfer', 'adjust'].forEach(function(action) {
+    ['usage', 'transfer'].forEach(function(action) {
         var el = document.getElementById('ag-' + action + '-' + ln);
         if (el) el.style.display = 'none';
     });
@@ -302,10 +290,9 @@ document.addEventListener('DOMContentLoaded', function() {
     // 前端即时校验（不发起请求）：申报使用不超透支下限、转出不超当前余额。
     // setCustomValidity 置位后浏览器阻止提交并显示中文提示；后端校验保留防绕过。
     document.querySelectorAll('form[id^="ag-usage-"] input[name="amount"], '
-                             + 'form[id^="ag-transfer-"] input[name="amount"], '
-                             + 'form[id^="ag-adjust-"] input[name="amount"]').forEach(function(input) {
+                             + 'form[id^="ag-transfer-"] input[name="amount"]').forEach(function(input) {
         input.addEventListener('input', function() {
-            var kind = this.form.id.split('-')[1];   // usage / transfer / adjust
+            var kind = this.form.id.split('-')[1];   // usage / transfer
             var v = parseInt(this.value, 10);
             if (kind === 'transfer') {
                 // 实收展示：与服务端公式一致 received = (amount*9+5)//10（90% 四舍五入到整数）
@@ -314,9 +301,9 @@ document.addEventListener('DOMContentLoaded', function() {
             }
             if (isNaN(v) || v <= 0) { this.setCustomValidity(''); return; }
             var bal = parseInt(this.getAttribute('data-balance'), 10);
-            if (kind === 'transfer' || kind === 'adjust') {
+            if (kind === 'transfer') {
                 this.setCustomValidity(v > bal
-                    ? (kind === 'transfer' ? '转出' : '调整') + '金额不得超过当前余额 ' + bal + ' 元' : '');
+                    ? '转出金额不得超过当前余额 ' + bal + ' 元' : '');
             } else {
                 var cap = bal + parseInt(this.getAttribute('data-limit'), 10);
                 this.setCustomValidity(v > cap
@@ -324,6 +311,54 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         });
     });
+
+    // 管理员页头「授予 / 追回」表单：两个金额互斥（只能填一个），按所填项切换提交目标；
+    // 追回额外前端校验：所选成员须已开户且追回额不超其余额（权威校验在后端）。
+    var grantForm = document.getElementById('ag-grant-form');
+    if (grantForm) {
+        var gIn = grantForm.querySelector('input[name="grant_amount"]');
+        var rIn = grantForm.querySelector('input[name="revoke_amount"]');
+        var sel = grantForm.querySelector('select[name="loginname"]');
+        var GRANT_URL = "{{ url_for('agrant.grant') }}";
+        var ADJUST_URL = "{{ url_for('agrant.adjust') }}";
+
+        function agClampRevoke() {
+            var v = parseInt(rIn.value, 10);
+            var bal = AG_BALANCES[sel.value];   // undefined = 该成员未开户
+            rIn.setCustomValidity((isNaN(v) || v <= 0) ? '' :
+                (bal === undefined) ? '该同学还没有经费账户，无法追回。' :
+                (v > bal) ? '追回金额不得超过当前余额 ' + bal + ' 元' : '');
+        }
+        // 残留的自定义校验会拦截后续 submit 事件（原生校验先于 submit 触发），任一输入变动须清空两边
+        [gIn, rIn].forEach(function(i) {
+            i.addEventListener('input', function() {
+                gIn.setCustomValidity(''); rIn.setCustomValidity('');
+            });
+        });
+        sel.addEventListener('change', function() { if (rIn.value) agClampRevoke(); });
+
+        grantForm.addEventListener('submit', function(e) {
+            gIn.setCustomValidity(''); rIn.setCustomValidity('');
+            var g = gIn.value.trim(), r = rIn.value.trim();
+            if (g && r) {          // 互斥：两个金额只能填一个
+                e.preventDefault();
+                gIn.setCustomValidity('「授予金额」与「追回金额」只能填写其中一项。');
+                gIn.reportValidity(); return;
+            }
+            if (!g && !r) {
+                e.preventDefault();
+                gIn.setCustomValidity('请填写「授予金额」或「追回金额」其中一项。');
+                gIn.reportValidity(); return;
+            }
+            if (r) {               // 按所填项切 action：追回 or 授予
+                agClampRevoke();
+                if (!rIn.checkValidity()) { e.preventDefault(); rIn.reportValidity(); return; }
+                this.action = ADJUST_URL;
+            } else {
+                this.action = GRANT_URL;
+            }
+        });
+    }
 
     var modalEl = document.getElementById('confirmModal');
     var modal = new bootstrap.Modal(modalEl);
