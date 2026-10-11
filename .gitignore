@@ -4,6 +4,7 @@
 
 # SQLite 数据库
 attendance*.db
+llm_usage_mirror*.db*
 
 # Python
 __pycache__/
@@ -14,3 +15,6 @@ __pycache__/
 
 # Scripts
 scripts/*
+
+tests/*
+AGENT_USAGE_DASHBOARD_PLAN.md

@@ -30,7 +30,7 @@ if ENV == 'test':
     USERS_PATH = os.environ.get('ZGL_TEST_USERS_PATH', _test_db + '.users.txt')
 else:
     _config_path = os.path.join(_project_dir, '.config.yml')
-    with open(_config_path) as f:
+    with open(_config_path, encoding='utf-8') as f:
         _config = yaml.safe_load(f)
     _server = _config['server']
     _effective = {**_server, **_config.get('pre', {})} if ENV == 'pre' else _server
@@ -46,6 +46,17 @@ DINGTALK_WEBHOOK_URL = _effective.get('dingtalk_webhook_url', '')
 DINGTALK_SECRET = _effective.get('dingtalk_secret', '')
 DEEPSEEK_API_KEY = _effective.get('deepseek_api_key', '')
 DEEPSEEK_BASE_URL = _effective.get('deepseek_base_url', 'https://api.deepseek.com')
+LLM_USAGE_SYNC = _effective.get('llm_usage_sync', {})
+if ENV == 'pre':
+    _pre_usage = _config.get('pre', {}).get('llm_usage_sync', {})
+    LLM_USAGE_SYNC = {**_server.get('llm_usage_sync', {}), **_pre_usage}
+    if not _pre_usage.get('mirror_db_path'):
+        LLM_USAGE_SYNC = {'enabled': False}
+if ENV == 'test':
+    LLM_USAGE_SYNC = {
+        'enabled': False,
+        'mirror_db_path': os.environ.get('ZGL_TEST_USAGE_DB_PATH', _test_db + '.usage.db'),
+    }
 
 flask_config = {
     'ENV_NAME': ENV,
@@ -58,4 +69,5 @@ flask_config = {
     'DINGTALK_SECRET': DINGTALK_SECRET,
     'DEEPSEEK_API_KEY': DEEPSEEK_API_KEY,
     'DEEPSEEK_BASE_URL': DEEPSEEK_BASE_URL,
+    'LLM_USAGE_SYNC': LLM_USAGE_SYNC,
 }

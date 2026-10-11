@@ -15,12 +15,23 @@ server:
   dingtalk_secret: SEC_YOUR_SIGN_SECRET_HERE
   deepseek_api_key: YOUR_DEEPSEEK_API_KEY
   deepseek_base_url: https://api.deepseek.com
+  # 新增 API 用量功能只读 Proxy 统计，不需要厂商 API Key；上面的 DeepSeek 配置供旧摘要功能使用。
+  llm_usage_sync:
+    enabled: false
+    base_url: https://YOUR_PROXY_HOST
+    dashboard_token: REPLACE_WITH_RANDOM_DASHBOARD_SERVICE_TOKEN
+    mirror_db_path: /zero/zgl-dashboard-data/llm_usage_mirror.db
+    timeout_seconds: 20
+    sync_start_month: '2026-10'
 
 # 预发环境配置（python app.py pre 或 ZGL_ENV=pre python app.py）
 # 未指定的字段回退到 server 的值
 pre:
   db_path: attendance_pre.db
   port: 5001
+  llm_usage_sync:
+    enabled: false
+    mirror_db_path: /zero/zgl-dashboard-data/llm_usage_mirror_pre.db
 
 # 端侧（树莓派）配置
 client:
