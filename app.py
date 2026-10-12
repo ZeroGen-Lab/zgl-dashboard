@@ -107,10 +107,10 @@ if _need_backup or _need_weekly or _need_usage:
     if _need_weekly:
         _scheduler.add_job(_weekly_summary_job, 'cron', day_of_week='mon', hour=18, minute=30)
     if _need_usage:
-        _scheduler.add_job(_usage_sync_job, 'cron', hour='0,6,12,18', minute=0,
+        _scheduler.add_job(_usage_sync_job, 'cron', hour='0,3,6,9,12,15,18,21', minute=0,
                            timezone=_shanghai_tz,
                            id='usage_sync', coalesce=True, max_instances=1)
-        # 启动后补一次同步，页面无需等待下一个六小时整点。
+        # 启动后补一次同步，页面无需等待下一个三小时整点。
         _scheduler.add_job(_usage_sync_job, 'date',
                            run_date=datetime.now(_shanghai_tz) + timedelta(seconds=2),
                            id='usage_sync_startup')

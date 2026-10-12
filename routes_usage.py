@@ -7,10 +7,10 @@ from datetime import datetime, timedelta
 
 from flask import Blueprint, current_app, jsonify, render_template, request, session
 
-from auth import login_required
+from auth import is_admin, login_required
 from coding_plan_keys import change_claim, claim_status, masked
 from usage_mirror_db import SHANGHAI, read_dashboard, read_key_usage
-from usage_sync import valid_month
+from usage_sync import SyncError, sync_usage, valid_month
 
 usage_bp = Blueprint('usage', __name__)
 
@@ -108,14 +108,43 @@ def api_usage():
     if not csrf:
         csrf = secrets.token_urlsafe(32)
         session['coding_plan_csrf'] = csrf
+    sync_csrf = session.get('usage_sync_csrf')
+    if is_admin() and not sync_csrf:
+        sync_csrf = secrets.token_urlsafe(32)
+        session['usage_sync_csrf'] = sync_csrf
     return render_template('api_usage.html', page='api_usage', month=month,
                            cards=cards, keys=keys, key_month=today.strftime('%Y-%m'),
                            proxy_public_base_url=PROXY_PUBLIC_BASE_URL,
                            recent_dates=recent_dates, model_charts=model_charts,
-                           coding_plan_csrf=csrf,
+                           coding_plan_csrf=csrf, usage_sync_csrf=sync_csrf,
+                           is_admin=is_admin(),
                            latest=data['latest'] if data else None,
                            last_success=last_success, stale=stale,
                            configured=bool(options.get('enabled')))
+
+
+@usage_bp.post('/api-usage/sync')
+def sync_api_usage():
+    if not session.get('user'):
+        return jsonify(error='请先登录'), 401
+    if not is_admin():
+        return jsonify(error='仅管理员可以更新用量'), 403
+    csrf = request.headers.get('X-CSRF-Token', '')
+    expected = session.get('usage_sync_csrf', '')
+    if not csrf or not expected or not hmac.compare_digest(csrf, expected):
+        return jsonify(error='页面已过期，请刷新后重试'), 403
+    options = current_app.config.get('LLM_USAGE_SYNC') or {}
+    if not options.get('enabled'):
+        return jsonify(error='用量同步尚未启用，请先检查配置'), 503
+    try:
+        result = sync_usage(options, current_app.config['DB_PATH'])
+    except SyncError as exc:
+        current_app.logger.warning('管理员手动同步 API 用量失败：%s', exc)
+        return jsonify(error=str(exc)), 409
+    except Exception:
+        current_app.logger.exception('管理员手动同步 API 用量失败')
+        return jsonify(error='同步失败，请查看服务日志'), 500
+    return jsonify(message='用量已更新', **result)
 
 
 @usage_bp.post('/api-usage/coding-keys/<key_id>/<action>')

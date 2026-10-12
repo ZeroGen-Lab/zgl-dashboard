@@ -21,12 +21,18 @@
             <h4 class="mb-1">API 用量</h4>
             <div class="text-muted">多平台 Token 使用情况 · 北京时间</div>
         </div>
+        <div class="d-flex flex-wrap align-items-center gap-2">
+        {% if is_admin %}
+        <button id="usage-sync-button" class="btn btn-outline-primary text-nowrap" type="button" {% if not configured %}disabled{% endif %}>更新</button>
+        {% endif %}
         <form method="get" class="d-flex align-items-center gap-2">
             <label for="month" class="text-muted text-nowrap">月份</label>
             <input id="month" name="month" type="month" class="form-control" value="{{ month }}">
             <button class="btn btn-dark text-nowrap" type="submit">查看</button>
         </form>
+        </div>
     </div>
+    {% if is_admin %}<div id="usage-sync-message" class="small mb-2" role="status" aria-live="polite"></div>{% endif %}
     {% if not configured %}
     <div class="alert alert-secondary mb-0">用量同步尚未配置。</div>
     {% elif not last_success %}
@@ -67,23 +73,22 @@
                 </div>
                 <div class="border-top mt-2 pt-2 small flex-grow-1">
                     {% if card.id == 'bailian' %}
-                    <div class="fw-semibold">公开参考价：qwen3.5-plus（华北 2·北京）</div>
-                    <div>每百万 Token，按单次请求的输入量分档：</div>
-                    <div>≤128K：输入 ¥0.8 / 输出 ¥4.8</div>
-                    <div>128K～256K：输入 ¥2 / 输出 ¥12</div>
-                    <div>256K～1M：输入 ¥4 / 输出 ¥24</div>
-                    <div class="text-muted mt-1">杭州 ECS 地域不等于百炼模型服务地域；请核对实际模型、端点和缓存折扣。</div>
+                    <div class="fw-semibold">千问 3.8 系列 · 每百万 Token</div>
+                    <div>qwen3.8-max：输入 ¥12 / 输出 ¥36</div>
+                    <div>qwen3.8-flash：输入 ¥0.8 / 输出 ¥2.7</div>
+                    <!-- <div class="text-muted mt-1">华北 2（北京）普通实时调用参考价；缓存、优惠及其他地域价格另算。</div> -->
                     {% elif card.id == 'deepseek' %}
                     <div class="fw-semibold">DeepSeek-V4.1-Flash · 每百万 Token</div>
+                    <div class="text-muted">调用模型名：deepseek-flash</div>
                     <div>空闲：缓存命中输入 ¥0.02；未命中 ¥1；输出 ¥4</div>
                     <div>高峰：缓存命中输入 ¥0.04；未命中 ¥2；输出 ¥8</div>
                     <div class="text-muted mt-1">高峰为北京时间工作日 09:00–12:00、14:00–18:00；其他时段为空闲。实际模型若为 Pro，价格不同。</div>
                     {% elif card.id == 'zhipu' %}
-                    <div class="fw-semibold">GLM Coding Plan 团队版 · 每席位积分额度</div>
+                    <div class="fw-semibold">GLM-5.3 · Coding Plan 团队版积分</div>
                     <div>标准版：15,000 / 5 小时；66,000 / 周</div>
                     <div>高级版：35,000 / 5 小时；155,000 / 周</div>
                     <div class="mt-1">积分 =（普通输入 × 6.9 + 缓存命中输入 × 1.7 + 输出 × 24）÷ 10,000 <span class="text-muted">（GLM-5.3）</span></div>
-                    <div class="text-muted mt-1">非高峰积分减半；高峰为工作日 14:00–18:00。超额按量付费需由管理员开启。</div>
+                    <div class="text-muted mt-1">高峰为北京时间工作日 14:00–18:00；非高峰积分减半。</div>
                     {% elif card.id == 'kimi' %}
                     <div class="fw-semibold">预备参考：最新旗舰 Kimi K3 · 每百万 Token</div>
                     <div>普通输入 ¥20；缓存命中输入 ¥2</div>
@@ -95,7 +100,7 @@
                 {% if card.id in ('deepseek', 'zhipu') %}
                 <div class="border-top mt-3 pt-3">
                     <div class="fw-semibold small mb-1">Coding Plan Key</div>
-                    <div class="text-muted small mb-2">领取后计入使用人数；不再使用时可以取消登记。</div>
+                    <div class="text-muted small mb-2">按照官方文档接入，不接受转发。领取key后计入使用人数；不再使用时可以取消登记。</div>
                     {% for key in card.coding_keys %}
                     <div class="coding-plan-key py-2 border-bottom" data-key-id="{{ key.id }}">
                         <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
@@ -124,7 +129,7 @@
         </div>
         {% endfor %}
     </div>
-    <p class="text-muted small mb-0 mt-3">Token 数按 Proxy 返回的 total_tokens 汇总；实际费用与 Coding Plan 积分以各平台账单为准。</p>
+    <p class="text-muted small mb-0 mt-3">Token 数按 total_tokens 汇总；实际费用与 Coding Plan 积分以各平台账单为准。</p>
 </section>
 
 <div class="card p-4 mb-4">
@@ -153,24 +158,28 @@
 </div>
 <section class="card p-4 mb-4" aria-labelledby="usage-guide-title">
     <h5 id="usage-guide-title" class="mb-2">如何调用</h5>
-    <p class="text-muted small mb-2">以百炼为例：先向管理员领取 Proxy 成员 Token，放入环境变量 <code>ZGL_MEMBER_TOKEN</code>。它不是厂商 Key，也不是 Dashboard 专用 Token。</p>
+    <p class="small mb-2">先向管理员领取<strong>自己的 Proxy 成员 Token</strong>，每人一枚，不要共用。示意为 <code>sk-zhangsan</code>：姓名部分全小写、无空格；实际使用管理员发放的完整 Token。安装 Python SDK：<code>pip install openai</code>。</p>
+    <p class="small mb-2">将自己的 Token 放入环境变量 <code>ZGL_MEMBER_TOKEN</code> 后，以 DeepSeek 为例：</p>
     <pre class="usage-example p-3 mb-2"><code>import os
-import requests
+from openai import OpenAI
 
-url = "{{ proxy_public_base_url }}/api/llm/bailian/v1/chat/completions"
-response = requests.post(
-    url,
-    headers={"Authorization": f"Bearer {os.environ['ZGL_MEMBER_TOKEN']}"},
-    json={
-        "model": "qwen3.6-flash",
-        "messages": [{"role": "user", "content": "请用一句话介绍你自己"}],
-        "stream": False,
-    },
-    timeout=(15, 660),
+client = OpenAI(
+    api_key=os.environ["ZGL_MEMBER_TOKEN"],
+    base_url="{{ proxy_public_base_url }}/api/llm/deepseek/v1",
 )
-response.raise_for_status()
-print(response.json()["choices"][0]["message"]["content"])</code></pre>
-    <p class="text-muted small mb-0">使用其他平台时，换成上方对应的 Base URL，并在后面加 <code>/chat/completions</code>；模型名称可先通过该 Base URL 的 <code>/models</code> 查询。不要重复追加 <code>/v1</code>。当前公网入口仍是 HTTP，请勿在不可信网络传输成员 Token 或敏感内容；正式使用前应启用 HTTPS。</p>
+
+response = client.chat.completions.create(
+    model="deepseek-flash",
+    messages=[
+        {"role": "system", "content": "You are a helpful assistant"},
+        {"role": "user", "content": "Hello"},
+    ],
+    stream=False,
+)
+print(response.choices[0].message.content)</code></pre>
+
+    <p class="small mb-2">智谱、DeepSeek 的 Coding Plan Key 若在上方领取，则<strong>按各平台官方文档直连</strong>，不使用这里的 Proxy Base URL。</p>
+    <p class="text-muted small mb-0">Base URL 到 <code>/v1</code> 为止，SDK 会补上 <code>/chat/completions</code>。请不要把厂商 Key 或 Dashboard Token 填入示例，也不要把自己的成员 Token 提交到仓库。</p>
 </section>
 <script>
 (function () {
@@ -214,6 +223,35 @@ print(response.json()["choices"][0]["message"]["content"])</code></pre>
             });
             panel.dataset.rendered = 'true';
         });
+    });
+})();
+</script>
+<script>
+(function () {
+    const button = document.getElementById('usage-sync-button');
+    if (!button) return;
+    const message = document.getElementById('usage-sync-message');
+    button.addEventListener('click', async () => {
+        button.disabled = true;
+        button.textContent = '更新中…';
+        message.className = 'small mb-2 text-muted';
+        message.textContent = '正在从服务器获取用量，请稍候。';
+        try {
+            const response = await fetch('/api-usage/sync', {
+                method: 'POST',
+                headers: { 'X-CSRF-Token': {{ usage_sync_csrf | tojson }} },
+                credentials: 'same-origin',
+                cache: 'no-store'
+            });
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.error || '更新失败，请重试');
+            window.location.reload();
+        } catch (error) {
+            message.className = 'small mb-2 text-danger';
+            message.textContent = error.message;
+            button.disabled = false;
+            button.textContent = '更新';
+        }
     });
 })();
 </script>
