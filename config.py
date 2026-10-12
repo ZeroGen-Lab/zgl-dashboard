@@ -46,6 +46,14 @@ DINGTALK_WEBHOOK_URL = _effective.get('dingtalk_webhook_url', '')
 DINGTALK_SECRET = _effective.get('dingtalk_secret', '')
 DEEPSEEK_API_KEY = _effective.get('deepseek_api_key', '')
 DEEPSEEK_BASE_URL = _effective.get('deepseek_base_url', 'https://api.deepseek.com')
+CODING_PLAN_KEYS = []
+if ENV != 'test':
+    _coding_plan_path = os.path.join(_project_dir, '.coding_plan_keys.yml')
+    if os.path.isfile(_coding_plan_path):
+        with open(_coding_plan_path, encoding='utf-8') as f:
+            CODING_PLAN_KEYS = (yaml.safe_load(f) or {}).get('keys', [])
+from coding_plan_keys import validate_keys
+validate_keys(CODING_PLAN_KEYS)
 LLM_USAGE_SYNC = _effective.get('llm_usage_sync', {})
 if ENV == 'pre':
     _pre_usage = _config.get('pre', {}).get('llm_usage_sync', {})
@@ -69,5 +77,6 @@ flask_config = {
     'DINGTALK_SECRET': DINGTALK_SECRET,
     'DEEPSEEK_API_KEY': DEEPSEEK_API_KEY,
     'DEEPSEEK_BASE_URL': DEEPSEEK_BASE_URL,
+    'CODING_PLAN_KEYS': CODING_PLAN_KEYS,
     'LLM_USAGE_SYNC': LLM_USAGE_SYNC,
 }

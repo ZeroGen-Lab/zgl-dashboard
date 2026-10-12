@@ -192,8 +192,8 @@ def sync_usage(config, primary_path, session=None, now=None):
     if not isinstance(base_url, str) or not base_url.startswith(('https://', 'http://')) or not token or not path:
         raise SyncError('LLM 用量同步配置不完整')
     base_url = base_url.rstrip('/')
-    if base_url.startswith('http://'):
-        LOG.warning('Proxy 使用 HTTP，服务令牌会在传输中暴露；建议改为 HTTPS')
+    # if base_url.startswith('http://'):
+    #     LOG.warning('Proxy 使用 HTTP，服务令牌会在传输中暴露；建议改为 HTTPS')
     timeout = config.get('timeout_seconds', 20)
     if type(timeout) not in (int, float) or not 1 <= timeout <= 120:
         raise SyncError('LLM 用量超时配置无效')

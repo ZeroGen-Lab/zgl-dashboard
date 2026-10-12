@@ -89,6 +89,12 @@ def initialize(path, primary_path):
                 error_message TEXT NOT NULL DEFAULT '',
                 source_generated_at TEXT
             );
+            CREATE TABLE IF NOT EXISTS coding_plan_claims (
+                key_id TEXT NOT NULL,
+                username TEXT NOT NULL,
+                claimed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (key_id, username)
+            );
         ''')
     if os.name != 'nt':
         os.chmod(path, 0o600)
@@ -122,5 +128,32 @@ def read_dashboard(path, month):
             return {'latest': dict(latest) if latest else None,
                     'last_success': success[0] if success else None,
                     'months': months, 'platforms': platforms, 'daily': daily, 'labels': labels}
+    except sqlite3.Error:
+        return None
+
+
+def read_key_usage(path, month, start_date, end_date):
+    """Read this month's per-key totals and recent daily usage from the mirror."""
+    if not path or not Path(path).is_file():
+        return None
+    try:
+        with closing(connect(path, readonly=True)) as conn:
+            monthly = [dict(row) for row in conn.execute('''
+                SELECT api_key_id, platform, SUM(total_tokens) total_tokens
+                FROM usage_monthly WHERE month_key=?
+                GROUP BY api_key_id, platform
+                ORDER BY total_tokens DESC, api_key_id
+            ''', (month,))]
+            daily_models = [dict(row) for row in conn.execute('''
+                SELECT platform, api_key_id, model, substr(requested_at,1,10) usage_date,
+                       SUM(total_tokens) total_tokens
+                FROM usage_records
+                WHERE requested_at>=? AND requested_at<?
+                  AND status IN ('success','error')
+                GROUP BY platform, api_key_id, model, usage_date
+            ''', (start_date, end_date))]
+            labels = {row['api_key_id']: row['label'] for row in conn.execute(
+                'SELECT api_key_id,label FROM usage_key_metadata')}
+            return {'monthly': monthly, 'daily_models': daily_models, 'labels': labels}
     except sqlite3.Error:
         return None

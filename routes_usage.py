@@ -1,34 +1,50 @@
 """Local mirror based API usage page."""
+import hmac
+import secrets
+import sqlite3
 from collections import defaultdict
-from calendar import monthrange
-from datetime import datetime
+from datetime import datetime, timedelta
 
-from flask import Blueprint, current_app, render_template, request
+from flask import Blueprint, current_app, jsonify, render_template, request, session
 
 from auth import login_required
-from usage_mirror_db import SHANGHAI, read_dashboard
+from coding_plan_keys import change_claim, claim_status, masked
+from usage_mirror_db import SHANGHAI, read_dashboard, read_key_usage
 from usage_sync import valid_month
 
 usage_bp = Blueprint('usage', __name__)
 
+PROXY_PUBLIC_BASE_URL = 'http://120.55.190.84'
+
 PLATFORM_CARDS = (
     {
-        'id': 'bailian', 'name': '百炼',
-        'url': 'https://help.aliyun.com/zh/model-studio/model-pricing',
+        'id': 'zhipu', 'name': '智谱',
+        'url': 'https://docs.bigmodel.cn/cn/coding-plan/team',
     },
     {
         'id': 'deepseek', 'name': 'DeepSeek',
         'url': 'https://api-docs.deepseek.com/zh-cn/quick_start/pricing/',
     },
     {
-        'id': 'zhipu', 'name': '智谱',
-        'url': 'https://docs.bigmodel.cn/cn/coding-plan/team',
+        'id': 'bailian', 'name': '百炼',
+        'url': 'https://help.aliyun.com/zh/model-studio/model-pricing',
     },
     {
         'id': 'kimi', 'name': 'Kimi',
         'url': 'https://platform.kimi.com/',
     },
 )
+
+
+def model_chart(series, dates):
+    """Prepare seven stacked daily bars, one segment per model."""
+    return {
+        'labels': [date[5:] for date in reversed(dates)],
+        'models': [
+            {'name': model, 'values': [values.get(date, 0) for date in reversed(dates)]}
+            for model, values in sorted(series.items())
+        ],
+    }
 
 
 @usage_bp.route('/api-usage')
@@ -48,24 +64,39 @@ def api_usage():
         platform = 'kimi' if platform == 'moonshot' else platform
         platform_totals[platform] += row['total_tokens']
         observed_platforms.add(platform)
+    coding_keys = current_app.config.get('CODING_PLAN_KEYS') or []
+    counts, claimed = claim_status(options.get('mirror_db_path'), session['user']) if coding_keys else ({}, set())
     cards = [{**card, 'tokens': platform_totals[card['id']],
+              'base_url': f'{PROXY_PUBLIC_BASE_URL}/api/llm/{card["id"]}/v1'
+              if card['id'] != 'kimi' else None,
+              'coding_keys': [
+                  {'id': key['id'], 'label': key['label'],
+                   'masked': masked(key['secret']) if key['secret'] else '待填写 Key',
+                   'configured': bool(key['secret']),
+                   'count': counts.get(key['id'], 0), 'claimed': key['id'] in claimed}
+                  for key in coding_keys if key['platform'] == card['id']
+              ],
               'has_data': card['id'] in observed_platforms}
              for card in PLATFORM_CARDS]
-    key_ids = sorted({row['api_key_id'] for row in data['daily']}) if data else []
-    day_values = defaultdict(dict)
-    if data:
-        for row in data['daily']:
-            day_values[row['usage_date']][row['api_key_id']] = row['total_tokens']
-    days = []
-    if day_values:
-        year, selected_month = map(int, month.split('-'))
-        last_day = monthrange(year, selected_month)[1]
-        if month == today.strftime('%Y-%m'):
-            last_day = today.day
-        days = [{'date': f'{month}-{day:02d}',
-                 'values': day_values.get(f'{month}-{day:02d}', {}),
-                 'total': sum(day_values.get(f'{month}-{day:02d}', {}).values())}
-                for day in range(last_day, 0, -1)]
+    recent_dates = [(today.date() - timedelta(days=offset)).isoformat() for offset in range(7)]
+    key_data = read_key_usage(options.get('mirror_db_path'), today.strftime('%Y-%m'),
+                              recent_dates[-1], (today.date() + timedelta(days=1)).isoformat())
+    platform_models = defaultdict(lambda: defaultdict(lambda: defaultdict(int)))
+    key_models = defaultdict(lambda: defaultdict(lambda: defaultdict(int)))
+    for row in key_data['daily_models'] if key_data else []:
+        platform = row['platform'].lower()
+        platform = 'kimi' if platform == 'moonshot' else platform
+        platform_models[platform][row['model']][row['usage_date']] += row['total_tokens']
+        key_models[(row['platform'], row['api_key_id'])][row['model']][row['usage_date']] += row['total_tokens']
+    key_labels = key_data['labels'] if key_data else {}
+    keys = [{**row,
+             'label': key_labels.get(row['api_key_id'], row['api_key_id']),
+             'chart_id': f'key-{index}'}
+            for index, row in enumerate(key_data['monthly'])] if key_data else []
+    model_charts = {f'platform-{card["id"]}': model_chart(platform_models[card['id']], recent_dates)
+                    for card in cards}
+    model_charts.update({key['chart_id']: model_chart(
+        key_models[(key['platform'], key['api_key_id'])], recent_dates) for key in keys})
     last_success = data['last_success'] if data else None
     stale = True
     if last_success:
@@ -73,12 +104,55 @@ def api_usage():
             stale = (today - datetime.fromisoformat(last_success)).total_seconds() > 7 * 3600
         except (ValueError, TypeError):
             pass
-    labels = data['labels'] if data else {}
-    display_labels = {key: f'{labels[key]} ({key})' if key in labels and labels[key] != key else key
-                      for key in key_ids}
+    csrf = session.get('coding_plan_csrf')
+    if not csrf:
+        csrf = secrets.token_urlsafe(32)
+        session['coding_plan_csrf'] = csrf
     return render_template('api_usage.html', page='api_usage', month=month,
-                           cards=cards, key_ids=key_ids, days=days,
-                           labels=display_labels,
+                           cards=cards, keys=keys, key_month=today.strftime('%Y-%m'),
+                           proxy_public_base_url=PROXY_PUBLIC_BASE_URL,
+                           recent_dates=recent_dates, model_charts=model_charts,
+                           coding_plan_csrf=csrf,
                            latest=data['latest'] if data else None,
                            last_success=last_success, stale=stale,
                            configured=bool(options.get('enabled')))
+
+
+@usage_bp.post('/api-usage/coding-keys/<key_id>/<action>')
+def coding_plan_key_action(key_id, action):
+    if not session.get('user'):
+        return jsonify(error='请先登录'), 401
+    csrf = request.headers.get('X-CSRF-Token', '')
+    expected = session.get('coding_plan_csrf', '')
+    if not csrf or not expected or not hmac.compare_digest(csrf, expected):
+        return jsonify(error='页面已过期，请刷新后重试'), 403
+    if action not in ('claim', 'reveal', 'release'):
+        return jsonify(error='无效操作'), 404
+    key = next((item for item in current_app.config.get('CODING_PLAN_KEYS', [])
+                if item['id'] == key_id), None)
+    if key is None:
+        return jsonify(error='找不到这个 Key'), 404
+    if not key['secret']:
+        return jsonify(error='这个 Key 尚未配置'), 409
+    path = (current_app.config.get('LLM_USAGE_SYNC') or {}).get('mirror_db_path')
+    if not path:
+        return jsonify(error='用量数据库路径尚未配置'), 503
+    try:
+        if action == 'reveal':
+            counts, claimed = claim_status(path, session['user'])
+            if key_id not in claimed:
+                return jsonify(error='请先登记使用'), 403
+            count = counts.get(key_id, 0)
+            is_claimed = True
+        else:
+            count, is_claimed = change_claim(path, current_app.config['DB_PATH'], key_id,
+                                             session['user'], action)
+    except (OSError, sqlite3.Error, ValueError):
+        current_app.logger.exception('Coding Plan 使用登记失败')
+        return jsonify(error='暂时无法保存使用登记'), 500
+    payload = {'count': count, 'claimed': is_claimed}
+    if action in ('claim', 'reveal'):
+        payload['secret'] = key['secret']
+    response = jsonify(payload)
+    response.headers['Cache-Control'] = 'no-store'
+    return response

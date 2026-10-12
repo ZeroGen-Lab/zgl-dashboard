@@ -15,6 +15,8 @@ server:
   dingtalk_secret: SEC_YOUR_SIGN_SECRET_HERE
   deepseek_api_key: YOUR_DEEPSEEK_API_KEY
   deepseek_base_url: https://api.deepseek.com
+  # Coding Plan Key 放在项目根目录私有 .coding_plan_keys.yml（参见 coding_plan_keys.example.yml）。
+  # 领取人数存放在 llm_usage_sync.mirror_db_path 指向的独立用量数据库中。
   # 新增 API 用量功能只读 Proxy 统计，不需要厂商 API Key；上面的 DeepSeek 配置供旧摘要功能使用。
   llm_usage_sync:
     enabled: false

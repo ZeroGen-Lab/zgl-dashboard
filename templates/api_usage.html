@@ -1,4 +1,19 @@
 {% extends "base.html" %}
+{% block extra_style %}
+<style>
+    .usage-platform-card { border-top: 3px solid #85b4e8; }
+    .usage-platform-card .usage-chart-panel summary .fw-bold { color: #2867aa; }
+    .usage-platform-card .usage-chart-chevron { color: #5c94d1; }
+    .usage-platform-card .usage-token-total { color: #285f9d; }
+    .usage-chart-panel summary { list-style: none; cursor: pointer; }
+    .usage-chart-panel summary::-webkit-details-marker { display: none; }
+    .usage-chart-panel[open] .usage-chart-chevron { transform: rotate(180deg); }
+    .usage-chart { position: relative; height: 230px; }
+    .usage-base-url { overflow-wrap: anywhere; }
+    .usage-example { background: #f5f8fb; border: 1px solid #dce6ef; border-radius: .5rem; overflow-x: auto; }
+    .coding-plan-key [hidden], .usage-chart-panel [hidden] { display: none !important; }
+</style>
+{% endblock %}
 {% block content %}
 <div class="card p-4 mb-4">
     <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-3">
@@ -31,13 +46,25 @@
     <div class="row g-3">
         {% for card in cards %}
         <div class="col-12 col-lg-6">
-            <div class="card p-3 h-100 d-flex flex-column">
-                <div class="d-flex justify-content-between align-items-center gap-2">
-                    <h6 class="mb-0 fw-bold">{{ card.name }}</h6>
-                    {% if card.id == 'kimi' and not card.has_data %}<span class="badge bg-secondary">待接入</span>{% endif %}
-                </div>
+            <div class="card usage-platform-card p-3 h-100 d-flex flex-column">
+                <details class="usage-chart-panel" data-chart-id="platform-{{ card.id }}">
+                    <summary class="d-flex justify-content-between align-items-center gap-2">
+                        <span class="fw-bold">{{ card.name }} <i class="bi bi-chevron-down usage-chart-chevron small"></i></span>
+                        {% if card.id == 'kimi' and not card.has_data %}<span class="badge bg-secondary">待接入</span>{% endif %}
+                    </summary>
+                    <div class="border-top mt-3 pt-3">
+                        <div class="fw-semibold mb-1">{{ card.name }} · 模型使用状况</div>
+                        <div class="text-muted small mb-2">近 7 天（{{ recent_dates[-1] }} 至 {{ recent_dates[0] }}）· 每日 Token</div>
+                        <div class="usage-chart"><canvas role="img" aria-label="{{ card.name }}近七天各模型每日 Token 柱状图"></canvas></div>
+                        <p class="text-muted small mb-0" data-chart-empty hidden>近 7 天暂无调用记录。</p>
+                    </div>
+                </details>
                 <div class="text-muted small mt-3">本月消耗 Token</div>
-                <div class="fs-3 fw-bold">{{ '{:,}'.format(card.tokens) }}</div>
+                <div class="fs-3 fw-bold usage-token-total">{{ '{:,}'.format(card.tokens) }}</div>
+                <div class="small mt-2 mb-2 usage-base-url">
+                    <span class="text-muted">推荐 Base URL：</span>
+                    {% if card.base_url %}<code>{{ card.base_url }}</code>{% else %}<span class="text-muted">暂无（待接入）</span>{% endif %}
+                </div>
                 <div class="border-top mt-2 pt-2 small flex-grow-1">
                     {% if card.id == 'bailian' %}
                     <div class="fw-semibold">公开参考价：qwen3.5-plus（华北 2·北京）</div>
@@ -65,8 +92,33 @@
                     {% endif %}
                 </div>
                 <a class="small mt-2" href="{{ card.url }}" target="_blank" rel="noopener noreferrer">查看官方计费规则 <i class="bi bi-box-arrow-up-right"></i></a>
-                {% if card.id == 'zhipu' %}
-                <div class="border-top mt-3 pt-2 small text-muted">团队专属 Key（别名）：<span class="badge bg-light text-secondary border">待补充</span></div>
+                {% if card.id in ('deepseek', 'zhipu') %}
+                <div class="border-top mt-3 pt-3">
+                    <div class="fw-semibold small mb-1">Coding Plan Key</div>
+                    <div class="text-muted small mb-2">领取后计入使用人数；不再使用时可以取消登记。</div>
+                    {% for key in card.coding_keys %}
+                    <div class="coding-plan-key py-2 border-bottom" data-key-id="{{ key.id }}">
+                        <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
+                            <div class="small">
+                                <span class="fw-semibold">{{ key.label }}</span>
+                                <code class="ms-2">{{ key.masked }}</code>
+                                <span class="text-muted ms-2" data-key-count>{{ key.count }} 人使用</span>
+                            </div>
+                            <div class="d-flex flex-wrap gap-2 ms-auto">
+                                {% if key.configured %}
+                                <button type="button" class="btn btn-sm btn-outline-primary" data-key-action="claim" {% if key.claimed %}hidden{% endif %}>＋ 使用并复制</button>
+                                <button type="button" class="btn btn-sm btn-outline-primary" data-key-action="reveal" {% if not key.claimed %}hidden{% endif %}>复制完整 Key</button>
+                                <button type="button" class="btn btn-sm btn-outline-secondary" data-key-action="release" {% if not key.claimed %}hidden{% endif %}>停止使用</button>
+                                {% else %}<span class="text-muted small">填写完整 Key 后可领取</span>{% endif %}
+                            </div>
+                        </div>
+                        <div class="small" data-key-message aria-live="polite"></div>
+                        <input class="form-control form-control-sm mt-2" type="password" data-key-manual-copy aria-label="手动复制完整 Key" autocomplete="off" readonly hidden>
+                    </div>
+                    {% else %}
+                    <div class="text-muted small">尚未配置可领取的 Coding Plan Key。</div>
+                    {% endfor %}
+                </div>
                 {% endif %}
             </div>
         </div>
@@ -76,31 +128,145 @@
 </section>
 
 <div class="card p-4 mb-4">
-    <h5 class="mb-2">各 Key 每日 Token</h5>
-    <p class="text-muted small mb-3">每个单元格为该 Key 当天的 Token 总和。</p>
-    {% if days %}
-    <div class="table-responsive">
-        <table class="table table-striped table-hover text-end align-middle mb-0">
-            <thead class="table-dark">
-                <tr>
-                    <th scope="col" class="text-start text-nowrap">日期</th>
-                    {% for key_id in key_ids %}<th scope="col" class="text-nowrap">{{ labels.get(key_id, key_id) }}</th>{% endfor %}
-                    <th scope="col" class="text-nowrap">当天合计</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for day in days %}
-                <tr>
-                    <th scope="row" class="text-start text-nowrap">{{ day.date }}</th>
-                    {% for key_id in key_ids %}<td>{{ '{:,}'.format(day['values'].get(key_id, 0)) }}</td>{% endfor %}
-                    <td class="fw-bold">{{ '{:,}'.format(day.total) }}</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    </div>
+    <h5 class="mb-2">各 Key 本月 Token 消耗</h5>
+    <p class="text-muted small mb-3">{{ key_month }} 月度总量来自服务器的月汇总；点击 Key 标题查看近 7 天（含今天）各模型的每日用量。</p>
+    {% if keys %}
+    {% for key in keys %}
+    <details class="usage-chart-panel border rounded mb-2" data-chart-id="{{ key.chart_id }}">
+        <summary class="p-3" style="cursor: pointer;">
+            <span class="fw-semibold">{{ key.label }} <i class="bi bi-chevron-down usage-chart-chevron small"></i></span>
+            {% if key.label != key.api_key_id %}<span class="text-muted small ms-1">{{ key.api_key_id }}</span>{% endif %}
+            <span class="badge bg-light text-secondary border ms-2">{{ key.platform }}</span>
+            <span class="float-end fw-bold">{{ '{:,}'.format(key.total_tokens) }} <span class="text-muted fw-normal small">Token</span></span>
+        </summary>
+        <div class="border-top px-3 py-3">
+            <div class="fw-semibold mb-1">{{ key.label }} · 模型使用状况</div>
+            <div class="text-muted small mb-2">近 7 天（{{ recent_dates[-1] }} 至 {{ recent_dates[0] }}）· 每日 Token</div>
+            <div class="usage-chart"><canvas role="img" aria-label="{{ key.label }}近七天各模型每日 Token 柱状图"></canvas></div>
+            <p class="text-muted small mb-0" data-chart-empty hidden>近 7 天暂无调用记录。</p>
+        </div>
+    </details>
+    {% endfor %}
     {% else %}
-    <p class="text-muted mb-0">该月暂无每日 Key 用量记录。</p>
+    <p class="text-muted mb-0">本月暂无 Key 用量记录。</p>
     {% endif %}
 </div>
+<section class="card p-4 mb-4" aria-labelledby="usage-guide-title">
+    <h5 id="usage-guide-title" class="mb-2">如何调用</h5>
+    <p class="text-muted small mb-2">以百炼为例：先向管理员领取 Proxy 成员 Token，放入环境变量 <code>ZGL_MEMBER_TOKEN</code>。它不是厂商 Key，也不是 Dashboard 专用 Token。</p>
+    <pre class="usage-example p-3 mb-2"><code>import os
+import requests
+
+url = "{{ proxy_public_base_url }}/api/llm/bailian/v1/chat/completions"
+response = requests.post(
+    url,
+    headers={"Authorization": f"Bearer {os.environ['ZGL_MEMBER_TOKEN']}"},
+    json={
+        "model": "qwen3.6-flash",
+        "messages": [{"role": "user", "content": "请用一句话介绍你自己"}],
+        "stream": False,
+    },
+    timeout=(15, 660),
+)
+response.raise_for_status()
+print(response.json()["choices"][0]["message"]["content"])</code></pre>
+    <p class="text-muted small mb-0">使用其他平台时，换成上方对应的 Base URL，并在后面加 <code>/chat/completions</code>；模型名称可先通过该 Base URL 的 <code>/models</code> 查询。不要重复追加 <code>/v1</code>。当前公网入口仍是 HTTP，请勿在不可信网络传输成员 Token 或敏感内容；正式使用前应启用 HTTPS。</p>
+</section>
+<script>
+(function () {
+    const charts = {{ model_charts | tojson }};
+    const names = [...new Set(Object.values(charts).flatMap(chart => chart.models.map(model => model.name)))].sort();
+    const colors = Object.fromEntries(names.map((name, index) =>
+        [name, `hsl(${Math.round(210 + index * 137.508) % 360}, 32%, 54%)`]));
+
+    document.querySelectorAll('[data-chart-id]').forEach(panel => {
+        panel.addEventListener('toggle', () => {
+            if (!panel.open || panel.dataset.rendered) return;
+            const data = charts[panel.dataset.chartId];
+            const empty = panel.querySelector('[data-chart-empty]');
+            if (!data || !data.models.length || !window.Chart) {
+                empty.textContent = !window.Chart ? '图表暂时无法加载，请稍后刷新页面。' : '近 7 天暂无调用记录。';
+                empty.hidden = false;
+                panel.querySelector('.usage-chart').hidden = true;
+                return;
+            }
+            new Chart(panel.querySelector('canvas'), {
+                type: 'bar',
+                data: {
+                    labels: data.labels,
+                    datasets: data.models.map(model => ({
+                        label: model.name,
+                        data: model.values,
+                        backgroundColor: colors[model.name],
+                        stack: 'tokens',
+                        borderRadius: 2
+                    }))
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { position: 'bottom' } },
+                    scales: {
+                        x: { stacked: true, grid: { display: false } },
+                        y: { stacked: true, beginAtZero: true, ticks: { precision: 0 } }
+                    }
+                }
+            });
+            panel.dataset.rendered = 'true';
+        });
+    });
+})();
+</script>
+<script>
+(function () {
+    const csrf = {{ coding_plan_csrf | tojson }};
+    document.querySelectorAll('.coding-plan-key').forEach(row => {
+        row.querySelectorAll('[data-key-action]').forEach(button => {
+            button.addEventListener('click', async () => {
+                const action = button.dataset.keyAction;
+                const message = row.querySelector('[data-key-message]');
+                const manual = row.querySelector('[data-key-manual-copy]');
+                const buttons = row.querySelectorAll('[data-key-action]');
+                buttons.forEach(item => item.disabled = true);
+                message.textContent = '';
+                manual.hidden = true;
+                manual.value = '';
+                try {
+                    const response = await fetch(`/api-usage/coding-keys/${encodeURIComponent(row.dataset.keyId)}/${action}`, {
+                        method: 'POST',
+                        headers: { 'X-CSRF-Token': csrf },
+                        credentials: 'same-origin',
+                        cache: 'no-store'
+                    });
+                    const result = await response.json();
+                    if (!response.ok) throw new Error(result.error || '操作失败，请重试');
+                    row.querySelector('[data-key-count]').textContent = `${result.count} 人使用`;
+                    row.querySelector('[data-key-action="claim"]').hidden = result.claimed;
+                    row.querySelector('[data-key-action="reveal"]').hidden = !result.claimed;
+                    row.querySelector('[data-key-action="release"]').hidden = !result.claimed;
+                    if (result.secret) {
+                        try {
+                            if (!navigator.clipboard || !window.isSecureContext) throw new Error('clipboard unavailable');
+                            await navigator.clipboard.writeText(result.secret);
+                            message.textContent = '完整 Key 已复制到剪贴板。';
+                        } catch (error) {
+                            manual.value = result.secret;
+                            manual.hidden = false;
+                            manual.focus();
+                            manual.select();
+                            message.textContent = '浏览器无法自动复制。下方完整 Key 已选中，请按 Ctrl+C 复制。';
+                        }
+                    } else {
+                        message.textContent = '已取消使用登记。';
+                    }
+                } catch (error) {
+                    message.textContent = error.message;
+                } finally {
+                    buttons.forEach(item => item.disabled = false);
+                }
+            });
+        });
+    });
+})();
+</script>
 {% endblock %}

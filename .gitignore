@@ -1,5 +1,6 @@
 # 敏感配置文件（包含 secret_key、api_secret、IP 白名单等）
 .config.yml
+.coding_plan_keys.yml
 .users.txt
 
 # SQLite 数据库
@@ -17,4 +18,3 @@ __pycache__/
 scripts/*
 
 tests/*
-AGENT_USAGE_DASHBOARD_PLAN.md
