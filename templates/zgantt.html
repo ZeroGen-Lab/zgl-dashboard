@@ -84,23 +84,19 @@ button.att-cell{cursor:pointer}
     <div class="d-flex flex-column flex-grow-1">
         <label class="form-label small mb-0">项目名称</label>
         <select name="project_id" class="form-select form-select-sm" onchange="this.form.submit()">
+            <option value="" {% if not project %}selected{% endif %}>请选择项目</option>
             {% for p in projects %}
             <option value="{{ p.id }}" {% if project and project.id==p.id %}selected{% endif %}>
                 {{ p.name }}（{{ '在研' if p.status=='active' else '结项' }}）
             </option>
-            {% else %}
-            <option value="">（暂无项目）</option>
             {% endfor %}
         </select>
     </div>
-    {% if is_admin %}
     <button type="button" class="btn btn-sm btn-outline-primary" onclick="toggleNew()">+ 添加项目</button>
-    {% endif %}
     <input type="hidden" name="m" value="{{ m }}">
 </form>
 
-{% if is_admin %}
-<!-- 新建项目（管理员，点击「添加项目」展开） -->
+<!-- 新建项目（点击「添加项目」展开） -->
 <div class="card mb-3" id="newProjectCard" style="display:none"><div class="card-body">
     <form method="post" action="{{ url_for('zgantt.create_project') }}">
         <div class="mb-2">
@@ -112,7 +108,7 @@ button.att-cell{cursor:pointer}
             <div class="d-flex flex-wrap gap-2">
                 {% for u in valid_users %}
                 <label class="user-pick">
-                    <input type="checkbox" name="members" value="{{ u.loginname }}">
+                    <input type="checkbox" name="members" value="{{ u.loginname }}" {{ 'checked' if u.loginname == current_user else '' }}>
                     {{ u.label }}
                 </label>
                 {% endfor %}
@@ -121,7 +117,6 @@ button.att-cell{cursor:pointer}
         <button class="btn btn-sm btn-primary">创建项目</button>
     </form>
 </div></div>
-{% endif %}
 
 {% if project %}
 <!-- 项目元信息（结项按钮置最右） -->
@@ -133,7 +128,7 @@ button.att-cell{cursor:pointer}
         </span>
         <span class="muted small">启动日 {{ project.start_date }} · 创建者 {{ project.created_by }}{% if project.closed_at %} · 结项于 {{ project.closed_at }}{% endif %}</span>
     </div>
-    {% if is_admin and project_open %}
+    {% if can_manage %}
     <form method="post" action="{{ url_for('zgantt.close_project') }}" data-confirm="确认结项「{{ project.name }}」？结项后项目变为只读，不可恢复。">
         <input type="hidden" name="project_id" value="{{ project.id }}">
         <button class="btn btn-sm btn-outline-danger">- 项目结项</button>
@@ -141,7 +136,7 @@ button.att-cell{cursor:pointer}
     {% endif %}
 </div>
 
-<!-- 成员名册 + 项目成员调整（管理员） -->
+<!-- 成员名册 + 项目成员调整（创建者或管理员） -->
 <div class="card mb-3"><div class="card-body py-2">
     <div class="d-flex flex-wrap align-items-center justify-content-between gap-2">
         <div class="d-flex flex-wrap align-items-center gap-1">
@@ -152,11 +147,11 @@ button.att-cell{cursor:pointer}
                 <span class="muted small">（暂无成员）</span>
             {% endfor %}
         </div>
-        {% if is_admin and project_open %}
+        {% if can_manage %}
         <button type="button" class="btn btn-sm btn-outline-secondary" onclick="toggleMembers()">项目成员调整</button>
         {% endif %}
     </div>
-    {% if is_admin and project_open %}
+    {% if can_manage %}
     <div id="membersPanel" style="display:none" class="mt-3">
         <form method="post" action="{{ url_for('zgantt.sync_members') }}">
             <input type="hidden" name="project_id" value="{{ project.id }}">
@@ -290,7 +285,7 @@ button.att-cell{cursor:pointer}
 
 {% else %}
 <div class="card"><div class="card-body muted">
-    {% if is_admin %}请先创建一个项目。{% else %}当前没有可见项目。{% endif %}
+    {% if projects %}请在上方「项目名称」下拉框中选择一个项目。{% else %}暂无项目，请点击「+ 添加项目」创建。{% endif %}
 </div></div>
 {% endif %}
 

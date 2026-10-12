@@ -197,9 +197,28 @@ def ensure_tables():
     conn.execute("CREATE INDEX IF NOT EXISTS idx_zg_att_user_month "
                  "ON zgantt_attendance(zgantt_id, loginname, date)")
 
-    # 所有时间戳默认值统一为 datetime('now','localtime')（服务器本地时区）。
-    # 存量老库的表若仍是 UTC 的 CURRENT_TIMESTAMP 默认值 + 补丁触发器，
-    # 用 scripts/rebuild_schema.py 一次性重建。
+    # ===== 学术交流经费（AGrant） =====
+    conn.execute('''CREATE TABLE IF NOT EXISTS academic_grant_accounts
+                    (loginname TEXT PRIMARY KEY NOT NULL REFERENCES users(loginname),
+                     balance INTEGER NOT NULL DEFAULT 0 CHECK(balance >= -500),
+                     status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','graduated')),
+                     graduated_at DATETIME,
+                     created_at DATETIME DEFAULT (datetime('now','localtime')))''')
+    # records：经费流水，只增不改不删。amount 为有符号增量（元）：
+    #   grant=正（管理员授予，/grant 仅正向）/ adjust=负（管理员调整扣减，/adjust 输入正数落负账）/
+    #   usage=负（本人申报使用）/ transfer_out=负（转出方）/ transfer_in=正（转入方实到额，手续费不入账即自然损耗）。
+    conn.execute('''CREATE TABLE IF NOT EXISTS academic_grant_records
+                    (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                     loginname TEXT NOT NULL REFERENCES users(loginname),
+                     record_type TEXT NOT NULL
+                        CHECK(record_type IN ('grant','adjust','usage','transfer_out','transfer_in')),
+                     amount INTEGER NOT NULL CHECK(amount != 0),
+                     note TEXT DEFAULT '',
+                     related_loginname TEXT REFERENCES users(loginname),
+                     created_by TEXT NOT NULL,
+                     created_at DATETIME DEFAULT (datetime('now','localtime')))''')
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_agr_loginname_created "
+                 "ON academic_grant_records(loginname, created_at DESC, id DESC)")
 
     conn.commit()
     conn.close()

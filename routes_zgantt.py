@@ -1,6 +1,7 @@
 """ZGantt 项目管理 Blueprint：项目甘特图 + 员工月度考勤。
 
-- 项目（在研 active / 结项 closed，单向）；管理员建项，启动日=今天且不可变；
+- 项目（在研 active / 结项 closed，单向）；任意合法用户可建项（建项即自动入组），
+  创建者与管理员可管理该项目（成员调整/结项）；启动日=今天且不可变；
   按 loginname 加成员，成员可设为离职(departed)但永不删除。
 - 工作组（无进度概念）→ 工作项（owner=创建者固定；end_date NULL=进行中，非空=已完成）。
   只有 owner 本人(在职)或管理员可完成工作项，完成时必填一句话总结（悬停可见）。
@@ -10,7 +11,7 @@
 """
 from datetime import datetime, timedelta
 from flask import Blueprint, render_template, request, redirect, url_for, session, flash
-from auth import login_required, admin_required, is_admin, VALID_USERS
+from auth import login_required, is_admin, VALID_USERS
 from db import get_db_connection
 from helpers import compute_month_range
 
@@ -36,6 +37,11 @@ def assert_project_open(conn, project_id):
     """返回 active 项目行；结项/不存在返回 None（所有写操作需项目在研）。"""
     return conn.execute(
         "SELECT * FROM zgantts WHERE id=? AND status='active'", (project_id,)).fetchone()
+
+
+def can_manage_project(project, user):
+    """创建者或管理员可管理项目（成员调整/结项）；project 为 zgantts 行。"""
+    return is_admin() or (project is not None and project['created_by'] == user)
 
 
 def display_name(conn, loginname):
@@ -196,17 +202,17 @@ def project_page():
                 "SELECT id, name, status FROM zgantts WHERE status=? ORDER BY created_at DESC, id DESC",
                 (status,)).fetchall()
 
+        # 未指定 project_id 或指定项不在当前筛选结果内 -> 不预选项目，页面提示用户自行选择
         sel_id = request.args.get('project_id', type=int)
-        if sel_id is None and drop:
-            sel_id = drop[0]['id']
-        if drop and not any(p['id'] == sel_id for p in drop):
-            sel_id = drop[0]['id']      # 选中项不在当前过滤结果里，回落到第一个
+        if not any(p['id'] == sel_id for p in drop):
+            sel_id = None
 
         project = None
         members = []
         gantt_ctx = {'days': [], 'groups': [], 'n_days': 0}
         att_ctx = {'days': [], 'rows': [], 'm_key': '', 'n_days': 0}
         can_edit = False
+        can_manage = False
         project_open = False
         editable_loginname = None
 
@@ -215,6 +221,7 @@ def project_page():
         if project:
             project_open = (project['status'] == 'active')
             can_edit = project_open and is_active_member(conn, project['id'], user)
+            can_manage = project_open and can_manage_project(project, user)
             editable_loginname = user if can_edit else None
             members = [dict(r) for r in conn.execute(
                 "SELECT pm.*, u.name FROM zgantt_members pm "
@@ -233,18 +240,19 @@ def project_page():
                            project=project, members=members,
                            member_by_login={mb['loginname']: mb for mb in members},
                            gantt=gantt_ctx, att=att_ctx,
-                           can_edit=can_edit, project_open=project_open,
+                           can_edit=can_edit, can_manage=can_manage,
+                           project_open=project_open,
                            is_admin=admin, current_user=user,
                            valid_users=valid_users,
                            editable_loginname=editable_loginname)
 
 
-# ---------- 写操作：项目/成员（管理员） ----------
+# ---------- 写操作：项目/成员（创建者或管理员） ----------
 
 @zgantt_bp.route('/create', methods=['POST'])
 @login_required
-@admin_required
 def create_project():
+    user = session['user']
     name = (request.form.get('name') or '').strip()
     raw_members = request.form.getlist('members')
     if not name:
@@ -257,8 +265,12 @@ def create_project():
     try:
         cur = conn.execute(
             "INSERT INTO zgantts (name, status, start_date, created_by) VALUES (?, 'active', ?, ?)",
-            (name, datetime.now().strftime('%Y-%m-%d'), session['user']))
+            (name, datetime.now().strftime('%Y-%m-%d'), user))
         pid = cur.lastrowid
+        # 建项即自动入组：创建者始终为在职成员（无论表单是否勾选，OR IGNORE 防重）
+        conn.execute(
+            "INSERT OR IGNORE INTO zgantt_members (zgantt_id, loginname, status) VALUES (?, ?, 'active')",
+            (pid, user))
         for ln in valid:
             conn.execute(
                 "INSERT OR IGNORE INTO zgantt_members (zgantt_id, loginname, status) VALUES (?, ?, 'active')",
@@ -276,17 +288,22 @@ def create_project():
 
 @zgantt_bp.route('/members/sync', methods=['POST'])
 @login_required
-@admin_required
 def sync_members():
     """一次性同步项目成员（在「项目成员调整」面板里勾选）：
     勾选=加入/复活，取消勾选(当前在职)=离职。离职成员勾选则复活。
+    仅项目创建者或管理员可操作。
     """
+    user = session['user']
     pid = request.form.get('project_id', type=int)
     selected = set(request.form.getlist('members'))
     conn = get_db_connection()
     try:
-        if not assert_project_open(conn, pid):
+        project = assert_project_open(conn, pid)
+        if project is None:
             flash('项目不存在或已结项')
+            return redirect(url_for('zgantt.project_page', project_id=pid))
+        if not can_manage_project(project, user):
+            flash('只有项目创建者或管理员可调整成员')
             return redirect(url_for('zgantt.project_page', project_id=pid))
         cur = {r['loginname']: r['status'] for r in conn.execute(
             "SELECT loginname, status FROM zgantt_members WHERE zgantt_id=?", (pid,)).fetchall()}
@@ -314,11 +331,18 @@ def sync_members():
 
 @zgantt_bp.route('/close', methods=['POST'])
 @login_required
-@admin_required
 def close_project():
+    user = session['user']
     pid = request.form.get('project_id', type=int)
     conn = get_db_connection()
     try:
+        project = assert_project_open(conn, pid)
+        if project is None:
+            flash('项目不存在或已结项')
+            return redirect(url_for('zgantt.project_page', project_id=pid))
+        if not can_manage_project(project, user):
+            flash('只有项目创建者或管理员可结项')
+            return redirect(url_for('zgantt.project_page', project_id=pid))
         conn.execute(
             "UPDATE zgantts SET status='closed', closed_at=datetime('now','localtime') "
             "WHERE id=? AND status='active'", (pid,))

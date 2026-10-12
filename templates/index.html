@@ -62,13 +62,39 @@
                 <td>
                     {% for card in r.cards %}
                     {% if r.can_manage_cards %}
-                    <form method="POST" action="{{ url_for('dashboard.delete_card') }}" class="d-inline-block m-1"
-                          onsubmit="return confirm('确定从该账号删除这张卡片吗？账号和历史数据将保留。');">
-                        <input type="hidden" name="binding_id" value="{{ card.id }}">
-                        <button type="submit" class="btn btn-sm btn-outline-danger">
+                    <button type="button" class="btn btn-sm btn-outline-danger m-1"
+                            data-bs-toggle="modal" data-bs-target="#unbindCard{{ card.id }}">
                             <i class="bi bi-trash"></i> {{ card.uid }}
-                        </button>
-                    </form>
+                    </button>
+
+                    <div class="modal fade text-start" id="unbindCard{{ card.id }}" tabindex="-1"
+                         aria-labelledby="unbindCardLabel{{ card.id }}" aria-hidden="true">
+                        <div class="modal-dialog modal-dialog-centered">
+                            <div class="modal-content">
+                                <div class="modal-header">
+                                    <h5 class="modal-title" id="unbindCardLabel{{ card.id }}">解绑卡片 {{ card.uid }}</h5>
+                                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button>
+                                </div>
+                                <div class="modal-body">
+                                    <p class="mb-2">是否同时清除这张卡的历史签到归属？</p>
+                                    <p class="small text-muted mb-0">
+                                        选择保留后，历史签到继续归属于账号 {{ r.loginname }}；
+                                        选择清除后，签到行、卡号和时间仍会保留，但账号归属将变为未归属。
+                                    </p>
+                                </div>
+                                <form method="POST" action="{{ url_for('dashboard.delete_card') }}">
+                                    <input type="hidden" name="binding_id" value="{{ card.id }}">
+                                    <div class="modal-footer flex-wrap">
+                                        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">取消</button>
+                                        <button type="submit" name="history_action" value="release"
+                                                class="btn btn-outline-danger">解绑并清除签到归属</button>
+                                        <button type="submit" name="history_action" value="preserve"
+                                                class="btn btn-success">仅解绑，保留历史签到</button>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
                     {% else %}
                     <span class="d-inline-block m-1 px-2 py-1 border border-secondary rounded text-muted"
                           style="font-size: 0.8125rem;">{{ card.uid }}</span>
