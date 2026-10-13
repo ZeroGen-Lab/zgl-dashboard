@@ -98,7 +98,9 @@ DeepSeek 和智谱的 Coding Plan Key 配置在项目根目录的私有 `.coding
 
 在 Dashboard 私有 `.config.yml` 的 `server.llm_usage_sync` 中设置 `enabled: true`、`base_url`、Proxy 的 Dashboard 专用 `dashboard_token`、`mirror_db_path` 和 `sync_start_month`。`dashboard_token` 只用于只读统计接口，不是厂商 API Key。`mirror_db_path` 必须使用与原 `db_path` 不同的绝对路径，并且 Dashboard 服务账号对其父目录有写权限。预发环境应配置自己的 `pre.llm_usage_sync.mirror_db_path`。生产建议使用 HTTPS，避免服务令牌在公网传输时暴露。
 
-配置完成后启动 `python app.py`：应用会异步执行一次初始同步，之后在每天北京时间 00:00、03:00、06:00、09:00、12:00、15:00、18:00、21:00 自动拉取。管理员也可在 API 用量页面点击「立即更新」；在 `.users.txt` 中给用户名追加 `,is_admin` 并重启应用即可授予管理员权限。无需为用量同步安装额外的 service 或 timer。Dashboard 进程需要持续运行；若现有部署使用 Gunicorn，多 worker 会各自启动内置调度器，因此这套方式应使用单 worker。应用停机期间的整点任务不会自动补跑，重新启动时的初始同步会补齐当前月和最近两个月的明细及配置起始月以来的月汇总。
+配置完成后启动 `python app.py`：应用会异步执行一次初始同步，之后在每天北京时间 00:00、03:00、06:00、09:00、12:00、15:00、18:00、21:00 自动拉取。管理员也可在 API 用量页面点击「立即更新」；在 `.users.txt` 中给用户名追加 `,is_admin` 并重启应用即可授予管理员权限。无需为用量同步安装额外的 service 或 timer。Dashboard 进程需要持续运行；若现有部署使用 Gunicorn，多 worker 会各自启动内置调度器，因此这套方式应使用单 worker。应用停机期间的整点任务不会自动补跑，重新启动时的初始同步会从本地游标继续。
+
+请先升级 ECS 上的 Proxy，再升级 Dashboard。首次使用增量接口时，Dashboard 会拉取起始月份以来的月汇总及 Proxy 尚保留的逐请求明细；之后只查询发生变化的月份，并按 `(updated_at, id)` 游标分页拉取新增或状态更新的明细。游标与镜像数据保存在同一个 SQLite 数据库中，每页提交后可断点续传。为防止同一秒内完成的请求漏掉状态变化，每次会重读上次游标所在秒，按请求 ID 去重更新。每次完整同步成功后，Dashboard 会清理 B 端过期明细，保留当前自然月及之前两个自然月（例如 10 月保留 8 月 1 日至今，12 月保留 10 月 1 日至今）；三张月汇总表仍长期保留。Proxy 尚未提供新接口（HTTP 404）时自动沿用原全量同步方式；升级 Proxy 后，下次同步自动切换增量。
 
 需要单独验证 Proxy 连通性或手动补拉时，可以运行：
 

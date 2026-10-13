@@ -128,7 +128,7 @@
         <summary class="p-3 d-flex flex-wrap align-items-center justify-content-between gap-2" style="cursor: pointer;">
             <span class="fw-semibold">{{ member.name }} <i class="bi bi-chevron-down usage-chart-chevron small"></i></span>
             <span class="d-flex flex-wrap align-items-baseline gap-2 ms-auto">
-                <span class="text-muted small">{{ '本月' if is_current_month else month }} Token 消耗</span>
+                <span class="text-muted small">{{ '本月' if is_current_month else month }}消耗</span>
                 <span class="fw-bold">{{ '{:,}'.format(member.total_tokens) }} <span class="text-muted fw-normal small">Token</span></span>
             </span>
         </summary>

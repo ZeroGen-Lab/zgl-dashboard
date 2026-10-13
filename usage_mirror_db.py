@@ -119,6 +119,11 @@ def initialize(path, primary_path):
                 error_message TEXT NOT NULL DEFAULT '',
                 source_generated_at TEXT
             );
+            CREATE TABLE IF NOT EXISTS usage_sync_state (
+                name TEXT PRIMARY KEY,
+                cursor_time TEXT NOT NULL DEFAULT '',
+                cursor_id INTEGER NOT NULL DEFAULT 0
+            );
             CREATE TABLE IF NOT EXISTS coding_plan_claims (
                 key_id TEXT NOT NULL,
                 username TEXT NOT NULL,

@@ -21,6 +21,10 @@ class SyncError(Exception):
     pass
 
 
+class UnsupportedIncremental(Exception):
+    """The Proxy is still running the legacy full-snapshot API."""
+
+
 def valid_month(value):
     return isinstance(value, str) and bool(MONTH_RE.fullmatch(value)) and 1 <= int(value[:4]) <= 9998
 
@@ -258,7 +262,47 @@ def process_lock(path):
                 fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
 
 
-def sync_usage(config, primary_path, session=None, now=None):
+def save_month_snapshot(conn, month, summaries, member_summaries, key_summaries, keys, mirrored):
+    conn.execute('DELETE FROM usage_monthly WHERE month_key=?', (month,))
+    conn.execute('DELETE FROM usage_monthly_by_member WHERE month_key=?', (month,))
+    conn.execute('DELETE FROM usage_monthly_by_key WHERE month_key=?', (month,))
+    conn.executemany('''INSERT INTO usage_monthly VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+        ON CONFLICT(month_key,platform,api_key_id,owner_snapshot) DO UPDATE SET
+        input_tokens=excluded.input_tokens,output_tokens=excluded.output_tokens,
+        total_tokens=excluded.total_tokens,reasoning_tokens=excluded.reasoning_tokens,
+        success_calls=excluded.success_calls,error_calls=excluded.error_calls,
+        source_updated_at=excluded.source_updated_at,mirrored_at=excluded.mirrored_at''',
+                     [(*r, mirrored) for r in summaries])
+    conn.executemany('INSERT INTO usage_monthly_by_member VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+                     [(*r, mirrored) for r in member_summaries])
+    conn.executemany('INSERT INTO usage_monthly_by_key VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+                     [(*r, mirrored) for r in key_summaries])
+    conn.executemany('''INSERT INTO usage_key_metadata VALUES (?,?,?,?,?,?)
+        ON CONFLICT(api_key_id) DO UPDATE SET platform=excluded.platform,
+        owner=excluded.owner,label=excluded.label,enabled=excluded.enabled,
+        mirrored_at=excluded.mirrored_at''', [(*r, mirrored) for r in keys])
+
+
+def save_records(conn, records, mirrored):
+    conn.executemany('''INSERT INTO usage_records VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        ON CONFLICT(request_id) DO UPDATE SET remote_id=excluded.remote_id,
+        session_id=excluded.session_id,platform=excluded.platform,
+        api_key_id=excluded.api_key_id,owner_snapshot=excluded.owner_snapshot,
+        model=excluded.model,status=excluded.status,input_tokens=excluded.input_tokens,
+        output_tokens=excluded.output_tokens,total_tokens=excluded.total_tokens,
+        reasoning_tokens=excluded.reasoning_tokens,requested_at=excluded.requested_at,
+        mirrored_at=excluded.mirrored_at''', [(*r, mirrored) for r in records])
+
+
+def prune_old_records(conn, current_month):
+    """Keep the current month plus the preceding two natural months."""
+    cutoff = previous_month(current_month, 2) + '-01'
+    deleted = conn.execute(
+        'DELETE FROM usage_records WHERE requested_at<?', (cutoff,)).rowcount
+    return deleted, cutoff
+
+
+def _sync_usage_full(config, primary_path, session=None, now=None):
     if not config.get('enabled'):
         raise SyncError('LLM 用量同步未启用')
     base_url = config.get('base_url') or ''
@@ -266,7 +310,7 @@ def sync_usage(config, primary_path, session=None, now=None):
     path = config.get('mirror_db_path')
     if not isinstance(base_url, str) or not base_url.startswith(('https://', 'http://')) or not token or not path:
         raise SyncError('LLM 用量同步配置不完整')
-    base_url = base_url.rstrip('/')
+        base_url = base_url.rstrip('/')
     # if base_url.startswith('http://'):
     #     LOG.warning('Proxy 使用 HTTP，服务令牌会在传输中暴露；建议改为 HTTPS')
     timeout = config.get('timeout_seconds', 20)
@@ -300,32 +344,9 @@ def sync_usage(config, primary_path, session=None, now=None):
                             member_summaries, key_summaries = detailed
                     mirrored = timestamp()
                     with closing(connect(path)) as conn, conn:
-                        conn.execute('DELETE FROM usage_monthly WHERE month_key=?', (month,))
-                        conn.execute('DELETE FROM usage_monthly_by_member WHERE month_key=?', (month,))
-                        conn.execute('DELETE FROM usage_monthly_by_key WHERE month_key=?', (month,))
-                        conn.executemany('''INSERT INTO usage_monthly VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
-                            ON CONFLICT(month_key,platform,api_key_id,owner_snapshot) DO UPDATE SET
-                            input_tokens=excluded.input_tokens,output_tokens=excluded.output_tokens,
-                            total_tokens=excluded.total_tokens,reasoning_tokens=excluded.reasoning_tokens,
-                            success_calls=excluded.success_calls,error_calls=excluded.error_calls,
-                            source_updated_at=excluded.source_updated_at,mirrored_at=excluded.mirrored_at''',
-                                         [(*r, mirrored) for r in summaries])
-                        conn.executemany('INSERT INTO usage_monthly_by_member VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
-                                         [(*r, mirrored) for r in member_summaries])
-                        conn.executemany('INSERT INTO usage_monthly_by_key VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
-                                         [(*r, mirrored) for r in key_summaries])
-                        conn.executemany('''INSERT INTO usage_key_metadata VALUES (?,?,?,?,?,?)
-                            ON CONFLICT(api_key_id) DO UPDATE SET platform=excluded.platform,
-                            owner=excluded.owner,label=excluded.label,enabled=excluded.enabled,
-                            mirrored_at=excluded.mirrored_at''', [(*r, mirrored) for r in keys])
-                        conn.executemany('''INSERT INTO usage_records VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-                            ON CONFLICT(request_id) DO UPDATE SET remote_id=excluded.remote_id,
-                            session_id=excluded.session_id,platform=excluded.platform,
-                            api_key_id=excluded.api_key_id,owner_snapshot=excluded.owner_snapshot,
-                            model=excluded.model,status=excluded.status,input_tokens=excluded.input_tokens,
-                            output_tokens=excluded.output_tokens,total_tokens=excluded.total_tokens,
-                            reasoning_tokens=excluded.reasoning_tokens,requested_at=excluded.requested_at,
-                            mirrored_at=excluded.mirrored_at''', [(*r, mirrored) for r in records])
+                        save_month_snapshot(conn, month, summaries, member_summaries,
+                                            key_summaries, keys, mirrored)
+                        save_records(conn, records, mirrored)
                         conn.execute('UPDATE usage_sync_runs SET source_generated_at=? WHERE id=?',
                                      (generated, run_id))
                     summary_count += len(summaries)
@@ -336,14 +357,19 @@ def sync_usage(config, primary_path, session=None, now=None):
                     LOG.warning('月份 %s 同步失败：%s', month,
                                 str(exc) if isinstance(exc, SyncError) else '数据库或网络错误')
             status = 'success' if not errors else ('partial' if len(errors) < len(months) else 'error')
+            deleted_count = 0
             with closing(connect(path)) as conn, conn:
+                if not errors:
+                    deleted_count, cutoff = prune_old_records(conn, current)
                 conn.execute('''UPDATE usage_sync_runs SET finished_at=?,status=?,months_requested=?,
                     records_upserted=?,summaries_upserted=?,error_message=? WHERE id=?''',
                              (timestamp(), status, len(months), record_count, summary_count,
                               ('失败月份：' + ', '.join(errors))[:300] if errors else '', run_id))
             if errors:
                 raise SyncError('部分月份同步失败：' + ', '.join(errors))
-            return {'months': len(months), 'records': record_count, 'summaries': summary_count}
+            LOG.info('B 端已删除 %s 之前的明细 %d 条', cutoff, deleted_count)
+            return {'months': len(months), 'records': record_count, 'summaries': summary_count,
+                    'records_deleted': deleted_count}
         except Exception:
             if run_id is not None:
                 with closing(connect(path)) as conn, conn:
@@ -354,3 +380,158 @@ def sync_usage(config, primary_path, session=None, now=None):
         finally:
             if own_session:
                 session.close()
+
+
+def fetch_record_changes(session, base_url, token, since, after_id, timeout):
+    data = fetch(session, base_url, token, '/internal/usage/records/changes',
+                 {'since': since, 'after_id': after_id, 'limit': 500}, timeout)
+    sources = data.get('records')
+    if not isinstance(sources, list) or len(sources) > 500:
+        raise SyncError('Proxy 增量明细结构无效')
+    records = []
+    previous = (since, after_id)
+    for source in sources:
+        if not isinstance(source, dict):
+            raise SyncError('Proxy 增量明细行无效')
+        remote_id = integer_field(source.get('id'), 'id')
+        updated_at = time_field(source.get('updated_at'), 'updated_at')
+        if (updated_at, remote_id) <= previous:
+            raise SyncError('Proxy 增量明细顺序无效')
+        previous = (updated_at, remote_id)
+        status = source.get('status')
+        if status not in ('pending', 'success', 'error'):
+            raise SyncError('Proxy 明细状态无效')
+        records.append((text_field(source.get('request_id'), 'request_id'), remote_id,
+                        *(text_field(source.get(field), field) for field in (
+                            'session_id', 'platform', 'api_key_id', 'owner_snapshot', 'model')),
+                        status,
+                        *(integer_field(source.get(field), field) for field in (
+                            'input_tokens', 'output_tokens', 'total_tokens', 'reasoning_tokens')),
+                        time_field(source.get('requested_at'), 'requested_at')))
+    next_after = data.get('next_after')
+    if next_after is not None:
+        if (not records or not isinstance(next_after, dict) or
+                next_after.get('updated_at') != previous[0] or next_after.get('id') != previous[1]):
+            raise SyncError('Proxy 增量明细游标无效')
+    return records, previous, next_after is not None
+
+
+def _sync_usage_incremental(config, primary_path, session, now=None):
+    if not config.get('enabled'):
+        raise SyncError('LLM 用量同步未启用')
+    base_url = config.get('base_url') or ''
+    token = config.get('dashboard_token', '')
+    path = config.get('mirror_db_path')
+    if not isinstance(base_url, str) or not base_url.startswith(('https://', 'http://')) or not token or not path:
+        raise SyncError('LLM 用量同步配置不完整')
+    timeout = config.get('timeout_seconds', 20)
+    if type(timeout) not in (int, float) or not 1 <= timeout <= 120:
+        raise SyncError('LLM 用量超时配置无效')
+    current = (now or datetime.now(timezone(timedelta(hours=8)))).strftime('%Y-%m')
+    start = config.get('sync_start_month', current)
+    if not valid_month(start) or start > current:
+        raise SyncError('同步起始月份无效')
+    initialize(path, primary_path)
+    with process_lock(path):
+        with closing(connect(path)) as conn:
+            summary_state = conn.execute(
+                "SELECT cursor_time FROM usage_sync_state WHERE name='monthly'").fetchone()
+            record_state = conn.execute(
+                "SELECT cursor_time FROM usage_sync_state WHERE name='records'").fetchone()
+        summary_since = summary_state[0] if summary_state else ''
+        record_since = record_state[0] if record_state else ''
+        try:
+            changes = fetch(session, base_url, token, '/internal/usage/changes',
+                            {'since': summary_since}, timeout)
+        except SyncError as exc:
+            if str(exc) == 'Proxy HTTP 404':
+                raise UnsupportedIncremental() from exc
+            raise
+        if changes.get('version') != 1 or changes.get('timezone') != 'Asia/Shanghai':
+            raise SyncError('Proxy 增量汇总版本或时区不匹配')
+        checked_at = time_field(changes.get('checked_at'), 'checked_at')
+        requested = changes.get('months')
+        if not isinstance(requested, list) or any(not valid_month(month) for month in requested):
+            raise SyncError('Proxy 变化月份列表无效')
+        months = sorted({month for month in requested if start <= month <= current})
+        errors = []
+        summary_count = record_count = 0
+        with closing(connect(path)) as conn, conn:
+            run_id = conn.execute("INSERT INTO usage_sync_runs(started_at,status) VALUES (?,'running')",
+                                  (timestamp(),)).lastrowid
+        try:
+            for month in months:
+                try:
+                    summaries, member_summaries, key_summaries, keys, generated = fetch_summary(
+                        session, base_url, token, month, timeout)
+                    mirrored = timestamp()
+                    with closing(connect(path)) as conn, conn:
+                        save_month_snapshot(conn, month, summaries, member_summaries,
+                                            key_summaries, keys, mirrored)
+                        conn.execute('UPDATE usage_sync_runs SET source_generated_at=? WHERE id=?',
+                                     (generated, run_id))
+                    summary_count += len(summaries)
+                except (SyncError, requests.RequestException, sqlite3.Error, OSError) as exc:
+                    errors.append(month)
+                    LOG.warning('月份 %s 增量同步失败：%s', month,
+                                str(exc) if isinstance(exc, SyncError) else '数据库或网络错误')
+            if not errors:
+                with closing(connect(path)) as conn, conn:
+                    conn.execute('''INSERT INTO usage_sync_state(name,cursor_time,cursor_id)
+                        VALUES ('monthly',?,0) ON CONFLICT(name) DO UPDATE SET
+                        cursor_time=excluded.cursor_time''', (checked_at,))
+            # Replay the cursor's second: older IDs may have finalized later in that same second.
+            cursor_time, cursor_id = record_since, 0
+            try:
+                while True:
+                    records, last, more = fetch_record_changes(
+                        session, base_url, token, cursor_time, cursor_id, timeout)
+                    if records:
+                        mirrored = timestamp()
+                        with closing(connect(path)) as conn, conn:
+                            save_records(conn, records, mirrored)
+                            conn.execute('''INSERT INTO usage_sync_state(name,cursor_time,cursor_id)
+                                VALUES ('records',?,?) ON CONFLICT(name) DO UPDATE SET
+                                cursor_time=excluded.cursor_time,cursor_id=excluded.cursor_id''', last)
+                        record_count += len(records)
+                        cursor_time, cursor_id = last
+                    if not more:
+                        break
+            except (SyncError, requests.RequestException, sqlite3.Error, OSError) as exc:
+                errors.append('records')
+                LOG.warning('明细增量同步失败：%s',
+                            str(exc) if isinstance(exc, SyncError) else '数据库或网络错误')
+            status = 'success' if not errors else ('partial' if len(errors) < len(months) + 1 else 'error')
+            deleted_count = 0
+            with closing(connect(path)) as conn, conn:
+                if not errors:
+                    deleted_count, cutoff = prune_old_records(conn, current)
+                conn.execute('''UPDATE usage_sync_runs SET finished_at=?,status=?,months_requested=?,
+                    records_upserted=?,summaries_upserted=?,error_message=?,source_generated_at=? WHERE id=?''',
+                             (timestamp(), status, len(months), record_count, summary_count,
+                              ('失败部分：' + ', '.join(errors))[:300] if errors else '', checked_at, run_id))
+            if errors:
+                raise SyncError('增量同步失败：' + ', '.join(errors))
+            LOG.info('B 端已删除 %s 之前的明细 %d 条', cutoff, deleted_count)
+            return {'months': len(months), 'records': record_count, 'summaries': summary_count,
+                    'records_deleted': deleted_count}
+        except Exception:
+            with closing(connect(path)) as conn, conn:
+                conn.execute('''UPDATE usage_sync_runs SET finished_at=?,status='error',
+                    error_message='同步异常中断' WHERE id=? AND status='running' ''',
+                             (timestamp(), run_id))
+            raise
+
+
+def sync_usage(config, primary_path, session=None, now=None):
+    own_session = session is None
+    session = session or requests.Session()
+    try:
+        try:
+            return _sync_usage_incremental(config, primary_path, session, now)
+        except UnsupportedIncremental:
+            LOG.info('Proxy 尚未提供增量接口，暂用兼容的全量同步')
+            return _sync_usage_full(config, primary_path, session, now)
+    finally:
+        if own_session:
+            session.close()
