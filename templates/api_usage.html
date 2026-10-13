@@ -11,6 +11,7 @@
     .usage-chart { position: relative; height: 230px; }
     .usage-base-url { overflow-wrap: anywhere; }
     .usage-example { background: #f5f8fb; border: 1px solid #dce6ef; border-radius: .5rem; overflow-x: auto; }
+    .usage-member-chart-title { font-family: "Noto Serif SC", "Songti SC", "SimSun", Georgia, serif; font-size: 1.05rem; font-weight: 600; letter-spacing: .03em; color: #587b98; }
     .coding-plan-key [hidden], .usage-chart-panel [hidden] { display: none !important; }
 </style>
 {% endblock %}
@@ -59,8 +60,8 @@
                         {% if card.id == 'kimi' and not card.has_data %}<span class="badge bg-secondary">待接入</span>{% endif %}
                     </summary>
                     <div class="border-top mt-3 pt-3">
-                        <div class="fw-semibold mb-1">{{ card.name }} · 模型使用状况</div>
-                        <div class="text-muted small mb-2">近 7 天（{{ recent_dates[-1] }} 至 {{ recent_dates[0] }}）· 每日 Token</div>
+                        <div class="usage-member-chart-title mb-1"><i>近 7 天模型使用状况</i></div>
+                        <div class="text-muted small mb-2"><i>{{ recent_dates[-1] }} 至 {{ recent_dates[0] }} · 每日 Token</i></div>
                         <div class="usage-chart"><canvas role="img" aria-label="{{ card.name }}近七天各模型每日 Token 柱状图"></canvas></div>
                         <p class="text-muted small mb-0" data-chart-empty hidden>近 7 天暂无调用记录。</p>
                     </div>
@@ -72,31 +73,17 @@
                     {% if card.base_url %}<code>{{ card.base_url }}</code>{% else %}<span class="text-muted">暂无（待接入）</span>{% endif %}
                 </div>
                 <div class="border-top mt-2 pt-2 small flex-grow-1">
-                    {% if card.id == 'bailian' %}
-                    <div class="fw-semibold">千问 3.8 系列 · 每百万 Token</div>
-                    <div>qwen3.8-max：输入 ¥12 / 输出 ¥36</div>
-                    <div>qwen3.8-flash：输入 ¥0.8 / 输出 ¥2.7</div>
-                    <!-- <div class="text-muted mt-1">华北 2（北京）普通实时调用参考价；缓存、优惠及其他地域价格另算。</div> -->
-                    {% elif card.id == 'deepseek' %}
-                    <div class="fw-semibold">DeepSeek-V4.1-Flash · 每百万 Token</div>
-                    <div class="text-muted">调用模型名：deepseek-flash</div>
-                    <div>空闲：缓存命中输入 ¥0.02；未命中 ¥1；输出 ¥4</div>
-                    <div>高峰：缓存命中输入 ¥0.04；未命中 ¥2；输出 ¥8</div>
-                    <div class="text-muted mt-1">高峰为北京时间工作日 09:00–12:00、14:00–18:00；其他时段为空闲。实际模型若为 Pro，价格不同。</div>
-                    {% elif card.id == 'zhipu' %}
-                    <div class="fw-semibold">GLM-5.3 · Coding Plan 团队版积分</div>
-                    <div>标准版：15,000 / 5 小时；66,000 / 周</div>
-                    <div>高级版：35,000 / 5 小时；155,000 / 周</div>
-                    <div class="mt-1">积分 =（普通输入 × 6.9 + 缓存命中输入 × 1.7 + 输出 × 24）÷ 10,000 <span class="text-muted">（GLM-5.3）</span></div>
-                    <div class="text-muted mt-1">高峰为北京时间工作日 14:00–18:00；非高峰积分减半。</div>
-                    {% elif card.id == 'kimi' %}
-                    <div class="fw-semibold">预备参考：最新旗舰 Kimi K3 · 每百万 Token</div>
-                    <div>普通输入 ¥20；缓存命中输入 ¥2</div>
-                    <div>缓存写入 ¥20；输出 ¥100</div>
-                    <div class="text-muted mt-1">目前尚未接入；后续若使用其他 Kimi 模型，应按实际模型价格更新。</div>
+                    {% if card.info %}
+                    {% if card.info.title %}<div class="fw-semibold">{{ card.info.title }}</div>{% endif %}
+                    {% for line in card.info.lines %}<div>{{ line }}</div>{% endfor %}
+                    {% if card.info.note %}<div class="text-muted mt-1">{{ card.info.note }}</div>{% endif %}
+                    {% else %}
+                    <div class="text-muted">暂无模型介绍。</div>
                     {% endif %}
                 </div>
-                <a class="small mt-2" href="{{ card.url }}" target="_blank" rel="noopener noreferrer">查看官方计费规则 <i class="bi bi-box-arrow-up-right"></i></a>
+                {% if card.info.pricing_url %}
+                <a class="small mt-2" href="{{ card.info.pricing_url }}" target="_blank" rel="noopener noreferrer">查看官方计费规则 <i class="bi bi-box-arrow-up-right"></i></a>
+                {% endif %}
                 {% if card.id in ('deepseek', 'zhipu') %}
                 <div class="border-top mt-3 pt-3">
                     <div class="fw-semibold small mb-1">Coding Plan Key</div>
@@ -133,32 +120,33 @@
 </section>
 
 <div class="card p-4 mb-4">
-    <h5 class="mb-2">各 Key 本月 Token 消耗</h5>
-    <p class="text-muted small mb-3">{{ key_month }} 月度总量来自服务器的月汇总；点击 Key 标题查看近 7 天（含今天）各模型的每日用量。</p>
-    {% if keys %}
-    {% for key in keys %}
-    <details class="usage-chart-panel border rounded mb-2" data-chart-id="{{ key.chart_id }}">
-        <summary class="p-3" style="cursor: pointer;">
-            <span class="fw-semibold">{{ key.label }} <i class="bi bi-chevron-down usage-chart-chevron small"></i></span>
-            {% if key.label != key.api_key_id %}<span class="text-muted small ms-1">{{ key.api_key_id }}</span>{% endif %}
-            <span class="badge bg-light text-secondary border ms-2">{{ key.platform }}</span>
-            <span class="float-end fw-bold">{{ '{:,}'.format(key.total_tokens) }} <span class="text-muted fw-normal small">Token</span></span>
+    <h5 class="mb-2">各成员模型用量</h5>
+    <p class="text-muted small mb-3">{{ month }} 月度总量按成员汇总；点击成员英文名查看近 7 天各模型的每日用量。</p>
+    {% if members %}
+    {% for member in members %}
+    <details class="usage-chart-panel border rounded mb-2" data-chart-id="{{ member.chart_id }}">
+        <summary class="p-3 d-flex flex-wrap align-items-center justify-content-between gap-2" style="cursor: pointer;">
+            <span class="fw-semibold">{{ member.name }} <i class="bi bi-chevron-down usage-chart-chevron small"></i></span>
+            <span class="d-flex flex-wrap align-items-baseline gap-2 ms-auto">
+                <span class="text-muted small">{{ '本月' if is_current_month else month }} Token 消耗</span>
+                <span class="fw-bold">{{ '{:,}'.format(member.total_tokens) }} <span class="text-muted fw-normal small">Token</span></span>
+            </span>
         </summary>
         <div class="border-top px-3 py-3">
-            <div class="fw-semibold mb-1">{{ key.label }} · 模型使用状况</div>
-            <div class="text-muted small mb-2">近 7 天（{{ recent_dates[-1] }} 至 {{ recent_dates[0] }}）· 每日 Token</div>
-            <div class="usage-chart"><canvas role="img" aria-label="{{ key.label }}近七天各模型每日 Token 柱状图"></canvas></div>
+            <div class="usage-member-chart-title mb-1"><i>近 7 天模型使用状况</i></div>
+            <div class="text-muted small mb-2"><i>{{ recent_dates[-1] }} 至 {{ recent_dates[0] }} · 每日 Token</i></div>
+            <div class="usage-chart"><canvas role="img" aria-label="{{ member.name }}近七天各模型每日 Token 柱状图"></canvas></div>
             <p class="text-muted small mb-0" data-chart-empty hidden>近 7 天暂无调用记录。</p>
         </div>
     </details>
     {% endfor %}
     {% else %}
-    <p class="text-muted mb-0">本月暂无 Key 用量记录。</p>
+    <p class="text-muted mb-0">本月暂无成员模型用量记录。</p>
     {% endif %}
 </div>
 <section class="card p-4 mb-4" aria-labelledby="usage-guide-title">
     <h5 id="usage-guide-title" class="mb-2">如何调用</h5>
-    <p class="small mb-2">先向管理员领取<strong>自己的 Proxy 成员 Token</strong>，每人一枚，不要共用。示意为 <code>sk-zhangsan</code>：姓名部分全小写、无空格；实际使用管理员发放的完整 Token。安装 Python SDK：<code>pip install openai</code>。</p>
+    <p class="small mb-2">每位成员使用自己的 Proxy Token，例如 <code>sk-zhangsan</code>（姓名部分全小写、无空格）。百炼真实 Key 由 Proxy 统一保管，所有成员通过自己的 <code>sk-name</code> 调用，无需申请或配置个人百炼 Key。安装 Python SDK：<code>pip install openai</code>。</p>
     <p class="small mb-2">将自己的 Token 放入环境变量 <code>ZGL_MEMBER_TOKEN</code> 后，以 DeepSeek 为例：</p>
     <pre class="usage-example p-3 mb-2"><code>import os
 from openai import OpenAI
@@ -185,8 +173,9 @@ print(response.choices[0].message.content)</code></pre>
 (function () {
     const charts = {{ model_charts | tojson }};
     const names = [...new Set(Object.values(charts).flatMap(chart => chart.models.map(model => model.name)))].sort();
+    const palette = ['#a9cdec', '#b9ddce', '#e8c8dc', '#f2d8b4', '#cbcdef', '#b7dfe8', '#dfd2ee', '#d5e4b9'];
     const colors = Object.fromEntries(names.map((name, index) =>
-        [name, `hsl(${Math.round(210 + index * 137.508) % 360}, 32%, 54%)`]));
+        [name, palette[index] || `hsl(${Math.round(index * 137.508) % 360}, 55%, 79%)`]));
 
     document.querySelectorAll('[data-chart-id]').forEach(panel => {
         panel.addEventListener('toggle', () => {

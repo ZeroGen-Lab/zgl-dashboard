@@ -18,3 +18,4 @@ __pycache__/
 scripts/*
 
 tests/*
+!tests/test_usage_sync.py

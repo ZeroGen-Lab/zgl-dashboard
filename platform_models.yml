@@ -1,0 +1,36 @@
+# 平台卡片中的模型介绍。修改后刷新 API 用量页面即可生效，无需重启服务。
+# 每个平台可编辑 title、lines、note 和 pricing_url；lines 按顺序显示。
+platforms:
+  bailian:
+    title: 千问 3.8 系列 · 每百万 Token
+    lines:
+      - 'qwen3.8-max：输入 ¥12 / 输出 ¥36'
+      - 'qwen3.8-flash：输入 ¥0.8 / 输出 ¥2.7'
+    note: ''
+    pricing_url: https://help.aliyun.com/zh/model-studio/model-pricing
+
+  deepseek:
+    title: DeepSeek-V4.1-Flash · 每百万 Token
+    lines:
+      - '调用模型名：deepseek-flash'
+      - '空闲：缓存命中输入 ¥0.02；未命中 ¥1；输出 ¥4'
+      - '高峰：缓存命中输入 ¥0.04；未命中 ¥2；输出 ¥8'
+    note: 高峰为北京时间工作日 09:00–12:00、14:00–18:00；其他时段为空闲。实际模型若为 Pro，价格不同。
+    pricing_url: https://api-docs.deepseek.com/zh-cn/quick_start/pricing/
+
+  zhipu:
+    title: GLM-5.3 · Coding Plan 团队版积分
+    lines:
+      - '标准版：15,000 / 5 小时；66,000 / 周'
+      - '高级版：35,000 / 5 小时；155,000 / 周'
+      - '积分 =（普通输入 × 6.9 + 缓存命中输入 × 1.7 + 输出 × 24）÷ 10,000（GLM-5.3）'
+    note: 高峰为北京时间工作日 14:00–18:00；非高峰积分减半。
+    pricing_url: https://docs.bigmodel.cn/cn/coding-plan/team
+
+  kimi:
+    title: 预备参考：最新旗舰 Kimi K3 · 每百万 Token
+    lines:
+      - '普通输入 ¥20；缓存命中输入 ¥2'
+      - '缓存写入 ¥20；输出 ¥100'
+    note: 目前尚未接入；后续若使用其他 Kimi 模型，应按实际模型价格更新。
+    pricing_url: https://platform.kimi.com/

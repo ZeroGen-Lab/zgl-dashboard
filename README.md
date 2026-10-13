@@ -92,7 +92,9 @@ sudo journalctl -u dashboard --since "1 hour ago"   # 查看最近 1 小时内�
 
 DeepSeek 和智谱的 Coding Plan Key 配置在项目根目录的私有 `.coding_plan_keys.yml`，格式见 `coding_plan_keys.example.yml`。当前预留 DeepSeek 一个、智谱三个独立槽位；在对应 `secret` 填入完整 Key 后重启 Dashboard 才可领取。每个 Key 的 `id` 应保持稳定，以便保留其使用人数。页面默认仅显示脱敏值；登录用户点击“＋ 使用并复制”后登记为使用者并取用完整 Key，同一人重复点击只计一次，也可“停止使用”。人数是成员自行登记的数量，不是服务商统计的实际调用人数。登记保存在 `llm_usage_sync.mirror_db_path` 指向的用量数据库的 `coding_plan_claims` 表中，每日用量同步不会清除该表；完整 Key 只在私有配置文件中。部署时应保护该文件并使用 HTTPS 提供 Dashboard 页面。
 
-`/api-usage` 在登录后固定展示百炼、DeepSeek、智谱、Kimi 四张月度用量卡片，以及每个 Key 本月的 Token 总和。点击平台名或 Key 标题可看最近七天按模型分色的 Token 柱状图。用量卡片不估算实际费用；Kimi 尚未接入时显示零用量和“待接入”。页面从独立的本地 SQLite 镜像库读取数据，不在用户打开页面时请求 Proxy。转发服务的厂商 API Key 和原始数据库保留在阿里云 ECS；Dashboard 的用量镜像库只保存统计字段、Key ID 和显示标签。Coding Plan Key 则按上述独立私有配置提供，不经过 Proxy。原有 DeepSeek 月度摘要仍按原配置运行。
+`/api-usage` 在登录后固定展示百炼、DeepSeek、智谱、Kimi 四张月度用量卡片，第二板块按成员英文名展示所选月份的 Token 总量，不按 Key 展示。点击平台名或成员名可看对应月份最后七天（当月截至今天）按模型分色的每日 Token 柱状图。用量卡片不估算实际费用；Kimi 尚未接入时显示零用量和“待接入”。页面从独立的本地 SQLite 镜像库读取数据，不在用户打开页面时请求 Proxy。转发服务的厂商 API Key 和原始数据库保留在阿里云 ECS；百炼只在 Proxy 中配置一条共享 Key，成员使用各自的 `sk-name`。Proxy 和镜像库均长期保存“人员 × 模型”和“Key × 模型”两套月度汇总，因此共享 Key 仍能追溯到具体使用人。Dashboard 的用量镜像库只保存统计字段、Key ID 和显示标签。Coding Plan Key 则按上述独立私有配置提供，不经过 Proxy。原有 DeepSeek 月度摘要仍按原配置运行。
+
+平台卡片的模型介绍、参考价格文字及官方计费链接保存在项目根目录的 `platform_models.yml`。修改 `title`、`lines`、`note` 或 `pricing_url` 后刷新页面即可生效，无需重启。历史月度汇总若缺少模型信息，会以“历史未细分”保留 Token 总量；当逐请求明细完整且与月汇总的各项指标一致时，同步会按实际模型回填。
 
 在 Dashboard 私有 `.config.yml` 的 `server.llm_usage_sync` 中设置 `enabled: true`、`base_url`、Proxy 的 Dashboard 专用 `dashboard_token`、`mirror_db_path` 和 `sync_start_month`。`dashboard_token` 只用于只读统计接口，不是厂商 API Key。`mirror_db_path` 必须使用与原 `db_path` 不同的绝对路径，并且 Dashboard 服务账号对其父目录有写权限。预发环境应配置自己的 `pre.llm_usage_sync.mirror_db_path`。生产建议使用 HTTPS，避免服务令牌在公网传输时暴露。
 

@@ -70,6 +70,36 @@ def initialize(path, primary_path):
                 mirrored_at TEXT NOT NULL,
                 PRIMARY KEY(month_key, platform, api_key_id, owner_snapshot)
             );
+            CREATE TABLE IF NOT EXISTS usage_monthly_by_member (
+                month_key TEXT NOT NULL,
+                platform TEXT NOT NULL,
+                owner_snapshot TEXT NOT NULL,
+                model TEXT NOT NULL,
+                input_tokens INTEGER NOT NULL DEFAULT 0,
+                output_tokens INTEGER NOT NULL DEFAULT 0,
+                total_tokens INTEGER NOT NULL DEFAULT 0,
+                reasoning_tokens INTEGER NOT NULL DEFAULT 0,
+                success_calls INTEGER NOT NULL DEFAULT 0,
+                error_calls INTEGER NOT NULL DEFAULT 0,
+                source_updated_at TEXT NOT NULL,
+                mirrored_at TEXT NOT NULL,
+                PRIMARY KEY(month_key, platform, owner_snapshot, model)
+            );
+            CREATE TABLE IF NOT EXISTS usage_monthly_by_key (
+                month_key TEXT NOT NULL,
+                platform TEXT NOT NULL,
+                api_key_id TEXT NOT NULL,
+                model TEXT NOT NULL,
+                input_tokens INTEGER NOT NULL DEFAULT 0,
+                output_tokens INTEGER NOT NULL DEFAULT 0,
+                total_tokens INTEGER NOT NULL DEFAULT 0,
+                reasoning_tokens INTEGER NOT NULL DEFAULT 0,
+                success_calls INTEGER NOT NULL DEFAULT 0,
+                error_calls INTEGER NOT NULL DEFAULT 0,
+                source_updated_at TEXT NOT NULL,
+                mirrored_at TEXT NOT NULL,
+                PRIMARY KEY(month_key, platform, api_key_id, model)
+            );
             CREATE TABLE IF NOT EXISTS usage_key_metadata (
                 api_key_id TEXT PRIMARY KEY,
                 platform TEXT NOT NULL,
@@ -96,6 +126,24 @@ def initialize(path, primary_path):
                 PRIMARY KEY (key_id, username)
             );
         ''')
+        with conn:
+            member_count = conn.execute('SELECT count(*) FROM usage_monthly_by_member').fetchone()[0]
+            key_count = conn.execute('SELECT count(*) FROM usage_monthly_by_key').fetchone()[0]
+            if member_count == 0 and key_count == 0:
+                conn.execute('''
+                    INSERT INTO usage_monthly_by_member
+                    SELECT month_key,platform,owner_snapshot,'历史未细分',
+                           SUM(input_tokens),SUM(output_tokens),SUM(total_tokens),SUM(reasoning_tokens),
+                           SUM(success_calls),SUM(error_calls),MAX(source_updated_at),MAX(mirrored_at)
+                    FROM usage_monthly GROUP BY month_key,platform,owner_snapshot
+                ''')
+                conn.execute('''
+                    INSERT INTO usage_monthly_by_key
+                    SELECT month_key,platform,api_key_id,'历史未细分',
+                           SUM(input_tokens),SUM(output_tokens),SUM(total_tokens),SUM(reasoning_tokens),
+                           SUM(success_calls),SUM(error_calls),MAX(source_updated_at),MAX(mirrored_at)
+                    FROM usage_monthly GROUP BY month_key,platform,api_key_id
+                ''')
     if os.name != 'nt':
         os.chmod(path, 0o600)
 
@@ -108,12 +156,13 @@ def read_dashboard(path, month):
         with closing(connect(path, readonly=True)) as conn:
             latest = conn.execute('SELECT * FROM usage_sync_runs ORDER BY id DESC LIMIT 1').fetchone()
             success = conn.execute("SELECT finished_at FROM usage_sync_runs WHERE status='success' ORDER BY id DESC LIMIT 1").fetchone()
-            months = [r[0] for r in conn.execute('SELECT DISTINCT month_key FROM usage_monthly ORDER BY month_key DESC')]
+            months = [r[0] for r in conn.execute(
+                'SELECT DISTINCT month_key FROM usage_monthly_by_key ORDER BY month_key DESC')]
             platforms = [dict(r) for r in conn.execute('''
                 SELECT platform, SUM(input_tokens) input_tokens, SUM(output_tokens) output_tokens,
                        SUM(total_tokens) total_tokens, SUM(success_calls) success_calls,
                        SUM(error_calls) error_calls
-                FROM usage_monthly WHERE month_key=? GROUP BY platform ORDER BY platform
+                FROM usage_monthly_by_key WHERE month_key=? GROUP BY platform ORDER BY platform
             ''', (month,))]
             start = month + '-01'
             year, part = map(int, month.split('-'))
@@ -132,28 +181,26 @@ def read_dashboard(path, month):
         return None
 
 
-def read_key_usage(path, month, start_date, end_date):
-    """Read this month's per-key totals and recent daily usage from the mirror."""
+def read_member_usage(path, month, start_date, end_date):
+    """Read per-member monthly totals and recent daily model usage from the mirror."""
     if not path or not Path(path).is_file():
         return None
     try:
         with closing(connect(path, readonly=True)) as conn:
             monthly = [dict(row) for row in conn.execute('''
-                SELECT api_key_id, platform, SUM(total_tokens) total_tokens
-                FROM usage_monthly WHERE month_key=?
-                GROUP BY api_key_id, platform
-                ORDER BY total_tokens DESC, api_key_id
+                SELECT owner_snapshot, SUM(total_tokens) total_tokens
+                FROM usage_monthly_by_member WHERE month_key=?
+                GROUP BY owner_snapshot
+                ORDER BY total_tokens DESC, owner_snapshot
             ''', (month,))]
             daily_models = [dict(row) for row in conn.execute('''
-                SELECT platform, api_key_id, model, substr(requested_at,1,10) usage_date,
+                SELECT owner_snapshot, platform, model, substr(requested_at,1,10) usage_date,
                        SUM(total_tokens) total_tokens
                 FROM usage_records
                 WHERE requested_at>=? AND requested_at<?
                   AND status IN ('success','error')
-                GROUP BY platform, api_key_id, model, usage_date
+                GROUP BY owner_snapshot, platform, model, usage_date
             ''', (start_date, end_date))]
-            labels = {row['api_key_id']: row['label'] for row in conn.execute(
-                'SELECT api_key_id,label FROM usage_key_metadata')}
-            return {'monthly': monthly, 'daily_models': daily_models, 'labels': labels}
+            return {'monthly': monthly, 'daily_models': daily_models}
     except sqlite3.Error:
         return None

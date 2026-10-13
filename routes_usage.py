@@ -2,14 +2,16 @@
 import hmac
 import secrets
 import sqlite3
+from calendar import monthrange
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 from flask import Blueprint, current_app, jsonify, render_template, request, session
 
 from auth import is_admin, login_required
 from coding_plan_keys import change_claim, claim_status, masked
-from usage_mirror_db import SHANGHAI, read_dashboard, read_key_usage
+from platform_card_info import load_platform_info
+from usage_mirror_db import SHANGHAI, read_dashboard, read_member_usage
 from usage_sync import SyncError, sync_usage, valid_month
 
 usage_bp = Blueprint('usage', __name__)
@@ -17,22 +19,10 @@ usage_bp = Blueprint('usage', __name__)
 PROXY_PUBLIC_BASE_URL = 'http://120.55.190.84'
 
 PLATFORM_CARDS = (
-    {
-        'id': 'zhipu', 'name': '智谱',
-        'url': 'https://docs.bigmodel.cn/cn/coding-plan/team',
-    },
-    {
-        'id': 'deepseek', 'name': 'DeepSeek',
-        'url': 'https://api-docs.deepseek.com/zh-cn/quick_start/pricing/',
-    },
-    {
-        'id': 'bailian', 'name': '百炼',
-        'url': 'https://help.aliyun.com/zh/model-studio/model-pricing',
-    },
-    {
-        'id': 'kimi', 'name': 'Kimi',
-        'url': 'https://platform.kimi.com/',
-    },
+    {'id': 'zhipu', 'name': '智谱'},
+    {'id': 'deepseek', 'name': 'DeepSeek'},
+    {'id': 'bailian', 'name': '百炼'},
+    {'id': 'kimi', 'name': 'Kimi'},
 )
 
 
@@ -66,7 +56,9 @@ def api_usage():
         observed_platforms.add(platform)
     coding_keys = current_app.config.get('CODING_PLAN_KEYS') or []
     counts, claimed = claim_status(options.get('mirror_db_path'), session['user']) if coding_keys else ({}, set())
+    platform_info = load_platform_info()
     cards = [{**card, 'tokens': platform_totals[card['id']],
+              'info': platform_info.get(card['id'], {}),
               'base_url': f'{PROXY_PUBLIC_BASE_URL}/api/llm/{card["id"]}/v1'
               if card['id'] != 'kimi' else None,
               'coding_keys': [
@@ -78,25 +70,27 @@ def api_usage():
               ],
               'has_data': card['id'] in observed_platforms}
              for card in PLATFORM_CARDS]
-    recent_dates = [(today.date() - timedelta(days=offset)).isoformat() for offset in range(7)]
-    key_data = read_key_usage(options.get('mirror_db_path'), today.strftime('%Y-%m'),
-                              recent_dates[-1], (today.date() + timedelta(days=1)).isoformat())
+    year, month_number = map(int, month.split('-'))
+    chart_end = (today.date() if month == today.strftime('%Y-%m') else
+                 date(year, month_number, monthrange(year, month_number)[1]))
+    recent_dates = [(chart_end - timedelta(days=offset)).isoformat() for offset in range(7)]
+    member_data = read_member_usage(options.get('mirror_db_path'), month,
+                                    max(recent_dates[-1], month + '-01'),
+                                    (chart_end + timedelta(days=1)).isoformat())
     platform_models = defaultdict(lambda: defaultdict(lambda: defaultdict(int)))
-    key_models = defaultdict(lambda: defaultdict(lambda: defaultdict(int)))
-    for row in key_data['daily_models'] if key_data else []:
+    member_models = defaultdict(lambda: defaultdict(lambda: defaultdict(int)))
+    for row in member_data['daily_models'] if member_data else []:
         platform = row['platform'].lower()
         platform = 'kimi' if platform == 'moonshot' else platform
         platform_models[platform][row['model']][row['usage_date']] += row['total_tokens']
-        key_models[(row['platform'], row['api_key_id'])][row['model']][row['usage_date']] += row['total_tokens']
-    key_labels = key_data['labels'] if key_data else {}
-    keys = [{**row,
-             'label': key_labels.get(row['api_key_id'], row['api_key_id']),
-             'chart_id': f'key-{index}'}
-            for index, row in enumerate(key_data['monthly'])] if key_data else []
+        member_models[row['owner_snapshot']][f'{platform} · {row["model"]}'][row['usage_date']] += row['total_tokens']
+    members = [{'name': row['owner_snapshot'], 'total_tokens': row['total_tokens'],
+                'chart_id': f'member-{index}'}
+               for index, row in enumerate(member_data['monthly'])] if member_data else []
     model_charts = {f'platform-{card["id"]}': model_chart(platform_models[card['id']], recent_dates)
                     for card in cards}
-    model_charts.update({key['chart_id']: model_chart(
-        key_models[(key['platform'], key['api_key_id'])], recent_dates) for key in keys})
+    model_charts.update({member['chart_id']: model_chart(member_models[member['name']], recent_dates)
+                         for member in members})
     last_success = data['last_success'] if data else None
     stale = True
     if last_success:
@@ -113,7 +107,8 @@ def api_usage():
         sync_csrf = secrets.token_urlsafe(32)
         session['usage_sync_csrf'] = sync_csrf
     return render_template('api_usage.html', page='api_usage', month=month,
-                           cards=cards, keys=keys, key_month=today.strftime('%Y-%m'),
+                           cards=cards, members=members,
+                           is_current_month=month == today.strftime('%Y-%m'),
                            proxy_public_base_url=PROXY_PUBLIC_BASE_URL,
                            recent_dates=recent_dates, model_charts=model_charts,
                            coding_plan_csrf=csrf, usage_sync_csrf=sync_csrf,

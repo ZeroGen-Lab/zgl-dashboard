@@ -4,6 +4,7 @@ import os
 import re
 import sqlite3
 import time
+from collections import defaultdict
 from contextlib import closing, contextmanager
 from datetime import datetime, timedelta, timezone
 
@@ -92,7 +93,8 @@ def fetch(session, base_url, token, path, params, timeout):
 
 def fetch_summary(session, base_url, token, month, timeout):
     data = fetch(session, base_url, token, '/internal/usage', {'month': month}, timeout)
-    if data.get('version') != 1 or data.get('month') != month or data.get('timezone') != 'Asia/Shanghai':
+    version = data.get('version')
+    if version not in (1, 2) or data.get('month') != month or data.get('timezone') != 'Asia/Shanghai':
         raise SyncError('Proxy 汇总版本、月份或时区不匹配')
     generated = time_field(data.get('generated_at'), 'generated_at')
     if not isinstance(data.get('rows'), list) or not isinstance(data.get('keys'), list):
@@ -105,6 +107,14 @@ def fetch_summary(session, base_url, token, month, timeout):
                      *(integer_field(source.get(f), f) for f in ('input_tokens', 'output_tokens', 'total_tokens',
                                                                 'reasoning_tokens', 'success_calls', 'error_calls')),
                      time_field(source.get('updated_at'), 'updated_at')))
+    if version == 2:
+        if not isinstance(data.get('member_rows'), list) or not isinstance(data.get('key_rows'), list):
+            raise SyncError('Proxy 汇总缺少人员或 Key 维度')
+        member_rows = parse_dimension_rows(data['member_rows'], month, 'owner_snapshot')
+        key_rows = parse_dimension_rows(data['key_rows'], month, 'api_key_id')
+    else:
+        member_rows = aggregate_legacy_rows(data['rows'], month, 'owner_snapshot')
+        key_rows = aggregate_legacy_rows(data['rows'], month, 'api_key_id')
     keys = []
     for source in data['keys']:
         if not isinstance(source, dict) or type(source.get('enabled')) is not bool:
@@ -112,7 +122,72 @@ def fetch_summary(session, base_url, token, month, timeout):
         keys.append((text_field(source.get('id'), 'id'), text_field(source.get('platform'), 'platform'),
                      text_field(source.get('owner'), 'owner'), text_field(source.get('label'), 'label'),
                      int(source['enabled'])))
-    return rows, keys, generated
+    return rows, member_rows, key_rows, keys, generated
+
+
+def parse_dimension_rows(sources, month, dimension):
+    rows = []
+    for source in sources:
+        if not isinstance(source, dict) or source.get('month_key') != month:
+            raise SyncError('Proxy 分维度汇总行月份不匹配')
+        rows.append((month, text_field(source.get('platform'), 'platform'),
+                     text_field(source.get(dimension), dimension), text_field(source.get('model'), 'model'),
+                     *(integer_field(source.get(field), field) for field in (
+                         'input_tokens', 'output_tokens', 'total_tokens', 'reasoning_tokens',
+                         'success_calls', 'error_calls')),
+                     time_field(source.get('updated_at'), 'updated_at')))
+    return rows
+
+
+def aggregate_legacy_rows(sources, month, dimension):
+    """Keep v1 Proxy compatibility; its monthly rows did not retain model names."""
+    totals = {}
+    for source in sources:
+        if not isinstance(source, dict) or source.get('month_key') != month:
+            raise SyncError('Proxy 汇总行月份不匹配')
+        key = (text_field(source.get('platform'), 'platform'),
+               text_field(source.get(dimension), dimension))
+        metrics = [integer_field(source.get(field), field) for field in (
+            'input_tokens', 'output_tokens', 'total_tokens', 'reasoning_tokens',
+            'success_calls', 'error_calls')]
+        updated = time_field(source.get('updated_at'), 'updated_at')
+        current = totals.setdefault(key, [0] * 6 + [updated])
+        for index, value in enumerate(metrics):
+            current[index] += value
+        current[6] = max(current[6], updated)
+    return [(month, platform, value, '历史未细分', *metrics)
+            for (platform, value), metrics in totals.items()]
+
+
+def model_summaries_from_records(month, summaries, records):
+    """Use real models only when detail matches every monthly source row exactly."""
+    if not records:
+        return None
+    expected = defaultdict(lambda: [0] * 6)
+    actual = defaultdict(lambda: [0] * 6)
+    members = defaultdict(lambda: [0] * 6)
+    keys = defaultdict(lambda: [0] * 6)
+    for row in summaries:
+        metrics = expected[(row[1], row[2], row[3])]
+        for index, value in enumerate(row[4:10]):
+            metrics[index] += value
+    for row in records:
+        if row[7] == 'pending':
+            continue
+        values = (*row[8:12], int(row[7] == 'success'), int(row[7] == 'error'))
+        for bucket in (actual[(row[3], row[4], row[5])],
+                       members[(row[3], row[5], row[6])],
+                       keys[(row[3], row[4], row[6])]):
+            for index, value in enumerate(values):
+                bucket[index] += value
+    if dict(expected) != dict(actual):
+        return None
+    updated = timestamp()
+    member_rows = [(month, platform, owner, model, *metrics, updated)
+                   for (platform, owner, model), metrics in sorted(members.items())]
+    key_rows = [(month, platform, key_id, model, *metrics, updated)
+                for (platform, key_id, model), metrics in sorted(keys.items())]
+    return member_rows, key_rows
 
 
 def fetch_records(session, base_url, token, month, timeout):
@@ -216,11 +291,18 @@ def sync_usage(config, primary_path, session=None, now=None):
                                       (timestamp(),)).lastrowid
             for month in months:
                 try:
-                    summaries, keys, generated = fetch_summary(session, base_url, token, month, timeout)
+                    summaries, member_summaries, key_summaries, keys, generated = fetch_summary(
+                        session, base_url, token, month, timeout)
                     records = fetch_records(session, base_url, token, month, timeout) if month >= detail_start else []
+                    if any(row[3] == '历史未细分' for row in member_summaries + key_summaries):
+                        detailed = model_summaries_from_records(month, summaries, records)
+                        if detailed is not None:
+                            member_summaries, key_summaries = detailed
                     mirrored = timestamp()
                     with closing(connect(path)) as conn, conn:
                         conn.execute('DELETE FROM usage_monthly WHERE month_key=?', (month,))
+                        conn.execute('DELETE FROM usage_monthly_by_member WHERE month_key=?', (month,))
+                        conn.execute('DELETE FROM usage_monthly_by_key WHERE month_key=?', (month,))
                         conn.executemany('''INSERT INTO usage_monthly VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
                             ON CONFLICT(month_key,platform,api_key_id,owner_snapshot) DO UPDATE SET
                             input_tokens=excluded.input_tokens,output_tokens=excluded.output_tokens,
@@ -228,6 +310,10 @@ def sync_usage(config, primary_path, session=None, now=None):
                             success_calls=excluded.success_calls,error_calls=excluded.error_calls,
                             source_updated_at=excluded.source_updated_at,mirrored_at=excluded.mirrored_at''',
                                          [(*r, mirrored) for r in summaries])
+                        conn.executemany('INSERT INTO usage_monthly_by_member VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+                                         [(*r, mirrored) for r in member_summaries])
+                        conn.executemany('INSERT INTO usage_monthly_by_key VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+                                         [(*r, mirrored) for r in key_summaries])
                         conn.executemany('''INSERT INTO usage_key_metadata VALUES (?,?,?,?,?,?)
                             ON CONFLICT(api_key_id) DO UPDATE SET platform=excluded.platform,
                             owner=excluded.owner,label=excluded.label,enabled=excluded.enabled,
