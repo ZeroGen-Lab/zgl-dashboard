@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-ZGL 组织活跃看板系统，包含 IC 卡签到、团队工作规划/进度跟踪、预约广场、周报摘要功能。采用端侧-服务端分离架构。Web 页面需要登录认证（用户名来自 `.users.txt`，密码规则见源码），API 接口需要 HMAC-SHA256 按日轮换 token 认证。签到 API 额外要求端侧 IP 白名单。
+ZGL 组织活跃看板系统，包含 IC 卡签到、团队工作规划/进度跟踪、预约广场、周报摘要、OKR、ZGantt、AGrant 和 API 用量页面。采用端侧-服务端分离架构。Web 页面需要登录认证（用户名来自 `.users.txt`，密码规则见源码），端侧 API 接口需要 HMAC-SHA256 按日轮换 token 认证。签到 API 额外要求端侧 IP 白名单。
 
 ## Running
 
@@ -15,21 +15,24 @@ python app.py                    # 启动在 0.0.0.0:5000，数据库表自动�
 # 预发环境（本地测试）
 python app.py pre                # 启动在 0.0.0.0:5101，使用 attendance_pre.db
 
+# 已启用 llm_usage_sync 时，手动执行一次 Proxy 用量同步
+python usage_sync.py
+
 # 端侧（树莓派刷卡客户端，需 root 权限访问 USB 设备）
 sudo python3 checkin_usb.py
 ```
 
 **本地测试请使用 `python app.py pre`（端口 5101）**，避免影响生产数据。
-
 建议部署为 systemd 服务。
 
 ## Architecture
 
 **端侧-服务端分离 + 服务端 Blueprint 模块化架构：**
 
-- **`app.py`**（入口）：创建 Flask app，加载配置，注册 7 个 Blueprint，注册 `fmt_time` Jinja 过滤器（浮点小时 → `"HH:MM"`，如 `6.5` → `06:30`，用于 booking 半点时间显示），启动服务；若配置了钉钉 webhook 则启动 APScheduler 周一 18:30 定时推送 onsite 报告（每人上周 onsite + 本月 onsite 达标进度，达标线=本月工作日-2，进度条展示）
-- **`config.py`**：从 `.config.yml` 加载配置，导出模块级全局变量（`DB_PATH`, `API_SECRET`, `ALLOWED_CHECKIN_IPS`, `SECRET_KEY`, `DINGTALK_WEBHOOK_URL`, `DINGTALK_SECRET`）
-- **`db.py`**：数据库连接（`get_db_connection()`）和 21 张表的初始化（`ensure_tables()`）
+- **`app.py`**（入口）：创建 Flask app，加载配置，注册 8 个 Blueprint，注册 `fmt_time` Jinja 过滤器（浮点小时 → `"HH:MM"`，如 `6.5` → `06:30`，用于 booking 半点时间显示），启动服务；若配置了钉钉 webhook 则启动 APScheduler 周一 18:30 定时推送 onsite 报告；生产环境每日 06:00 备份主库；启用 `llm_usage_sync` 时，启动后及北京时间每 3 小时同步一次用量镜像
+- **`config.py`**：从 `.config.yml` 的 `server.coding_plan_keys` 加载 Coding Plan Key，集中处理配置校验、脱敏显示和使用登记，导出模块级全局变量（`DB_PATH`, `API_SECRET`, `ALLOWED_CHECKIN_IPS`, `SECRET_KEY`, `DINGTALK_WEBHOOK_URL`, `DINGTALK_SECRET`）
+- **`db.py`**：主业务库连接（`get_db_connection()`）和 21 张表的初始化（`ensure_tables()`）
+- **`db_usage.py`**：独立用量镜像库的路径校验、连接、8 张表初始化和页面只读查询；与 `db.py` 分别管理不同的 SQLite 文件，包含 Coding Plan Key 使用登记表 `coding_plan_claims`
 - **`auth.py`**：认证基础设施——用户集（`.users.txt`）、HMAC token 生成/验证、装饰器（`login_required`, `token_required`, `checkin_ip_required`）
 - **`helpers.py`**：业务辅助函数（`compute_week_key`, `compute_upcoming_instances`, `is_instance_expired`, `compute_summary_week_range`, `generate_weekly_summary`）。`is_instance_expired(slot, date)` 判断 booking 实例是否已过结束时间（`now ≥ 当日 + end_hour`），用于实效只读判定
 - **`notifier.py`**：钉钉群机器人消息推送（`send_dingtalk_markdown`），支持 HMAC-SHA256 加签
@@ -40,9 +43,13 @@ sudo python3 checkin_usb.py
 - **`routes_okr.py`**：Blueprint（url_prefix='/okr'）——OKR 管理
 - **`routes_zgantt.py`**：Blueprint（url_prefix='/zgantt'）——ZGantt 项目管理（项目甘特图 + 项目考勤）
 - **`routes_agrant.py`**：Blueprint（url_prefix='/agrant'）——学术交流经费（AGrant）管理：管理员页头表单授予/追回额度（两个金额输入互斥，只能填一个）、学生申报使用、同学间转赠（手续费 10%）、毕业冻结
+- **`routes_usage.py`**：Blueprint——API 用量页面、管理员同步和 Coding Plan Key 操作；每次打开页面从 `platform_models.yml` 读取平台卡片介绍，刷新即可看到配置修改
+- **`usage_sync.py`**：请求 Proxy、校验数据、写入镜像库、维护增量游标与运行记录、清理过期明细；增量接口返回 404 时回退全量同步。定时任务和管理员按钮复用 `sync_usage()`，`python usage_sync.py` 是手动运行入口
 - **`checkin_usb.py`**（端侧/树莓派）：通过 `evdev` 读取 USB IC 读卡器输入，刷卡后先写本地 SQLite，再 HTTP POST 同步到服务端（请求头带 `Authorization: Bearer <HMAC-token>`）。本地表有 `synced` 字段追踪同步状态（0=未同步, 1=已同步）。`retry_sync` 每日自动重试7天内未同步记录（`threading.Timer(86400)`）。
 
 **数据同步流：** 读卡器 → 本地 DB 写入 → HTTP POST `/api/checkin`（带 HMAC token） → 服务端 DB 写入
+
+**API 用量数据流：** Proxy 只读统计接口 → `usage_sync.py` → `db_usage.py` 管理的独立 SQLite 镜像库 → `routes_usage.py` 读取并展示。用户打开页面不会即时请求 Proxy；Coding Plan Key 的完整值来自私有 `.config.yml`，领取记录保存在镜像库。
 
 **端侧与服务端的 `sign_ins` 表结构不同：**
 - 服务端：`id, loginname, card_uid, timestamp`（无 synced 字段）
@@ -55,7 +62,9 @@ sudo python3 checkin_usb.py
 
 ## Database
 
-SQLite（`attendance.db` / `attendance_pre.db`），21 张表由 `db.py: ensure_tables()` 创建。所有"行创建时刻"型时间戳列的默认值统一为 `datetime('now','localtime')`（服务器本地时间）；业务时刻/生命周期时刻列（如 sign_ins.timestamp、closed_at、departed_at）无默认值。数据库连接开启外键校验（`PRAGMA foreign_keys=ON`）。
+主业务库使用 SQLite（`attendance.db` / `attendance_pre.db`），21 张表由 `db.py: ensure_tables()` 创建。所有"行创建时刻"型时间戳列的默认值统一为 `datetime('now','localtime')`（服务器本地时间）；业务时刻/生命周期时刻列（如 sign_ins.timestamp、closed_at、departed_at）无默认值。主库连接开启外键校验（`PRAGMA foreign_keys=ON`）。
+
+API 用量使用 `llm_usage_sync.mirror_db_path` 指定的另一份 SQLite 文件，由 `db_usage.py: initialize()` 建表；路径必须为绝对路径且不能与主业务库相同。
 
 **身份与卡片：**
 - `users`：账号（loginname PK, name, email）。email 全局唯一（UNIQUE，允许多行 NULL）；**登录即建档**（name 以登录名占位），姓名/邮箱仅本人经 `/update_profile` 修改
@@ -90,6 +99,15 @@ SQLite（`attendance.db` / `attendance_pre.db`），21 张表由 `db.py: ensure_
 - `academic_grant_accounts`：经费账户（loginname PK, balance INTEGER 元 CHECK≥-500（允许透支至 -500 元）, status∈{active,graduated}, graduated_at, created_at）。首次授予即开户（仅限已完成姓名绑定的用户）；毕业仅作用于本页面：冻结一切额度变动（授予/调整/申报/转出/转入），记录保留可见，可撤销（graduated_at 置空复活，同 zgantt_members.departed 模式）
 - `academic_grant_records`：经费流水（id, loginname, record_type∈{grant,adjust,usage,transfer_out,transfer_in}, amount 有符号增量元 CHECK≠0, note, related_loginname 转赠对方, created_by, created_at）；只增不改不删，对账恒等式：每账户 SUM(amount)==balance。grant=正（授予，页头表单「授予金额」仅正向）/adjust=负（管理员追回扣减，页头表单「追回金额」输入正数落负账）/usage=负（本人申报）/transfer_out=负、transfer_in=正（转赠实到额）；转赠手续费 10%（received=(amount*9+5)//10，实收 90% 四舍五入到整数），手续费不入账即自然损耗；转出额与追回扣减额均不得超过当前余额（两者不透支，透支下限 -500 仅适用于申报使用）
 
+**独立 API 用量镜像库（`db_usage.py`，8 张表）：**
+- `usage_records`：逐请求用量明细，包含请求 ID、平台、Key ID、成员、模型、状态、Token 数与时间；成功同步后仅保留当前自然月及之前两个自然月的明细
+- `usage_monthly`、`usage_monthly_by_member`、`usage_monthly_by_key`：长期保留原始月汇总，以及按成员 × 模型、Key × 模型拆分的月汇总；缺少模型信息的旧数据以“历史未细分”保留
+- `usage_key_metadata`：Proxy Key 的 ID、平台、归属人与显示标签；不保存厂商 API Key
+- `usage_sync_runs`、`usage_sync_state`：同步状态、错误信息与增量游标；明细按页提交，失败后可从游标继续
+- `coding_plan_claims`：Coding Plan Key 的 `key_id`、`username`、`claimed_at`，复合主键避免同一人重复计数；完整 Key 只在私有 `.config.yml`，同步不会清理登记表
+
+`db_usage.py` 提供路径校验、连接、建表和页面查询；同步写入 SQL 位于 `usage_sync.py`，Coding Plan 领取登记的读写函数目前位于 `config.py`。因此它与 `db.py` 对标的是“各自数据库的基础模块”，并非两份完全相同的 CRUD 接口。
+
 **存量库迁移：** 老库（UTC 默认值 + 补丁触发器结构）用 `scripts/rebuild_schema.py` 一次性重建（改名临时表→按最新 DDL 重建→拷回→删临时表；自动备份，外键/行数/完整性校验通过才提交）。
 
 ## Key API Endpoints
@@ -116,6 +134,9 @@ SQLite（`attendance.db` / `attendance_pre.db`），21 张表由 `db.py: ensure_
 | `/agrant/transfer` | POST | login | 转赠额度（to + amount；手续费 10%，received=(amount*9+5)//10 四舍五入，转出额不得超过当前余额） |
 | `/agrant/graduate/<loginname>` | POST | login + admin | 标记毕业（版块冻结只读，记录保留） |
 | `/agrant/revoke/<loginname>` | POST | login + admin | 撤销毕业（恢复操作） |
+| `/api-usage` | GET | login | 查看平台与成员月度用量、近七天模型图表和 Coding Plan Key 槽位 |
+| `/api-usage/sync` | POST | login + admin + CSRF | 管理员立即同步用量镜像 |
+| `/api-usage/coding-keys/<key_id>/<action>` | POST | login + CSRF | `claim` 登记并返回 Key、`reveal` 向已登记成员返回 Key、`release` 取消登记 |
 | `/api/checkin` | POST | token + IP白名单 | JSON `{"uid", "timestamp"}` 签到同步接口 |
 | `/api/weekly_plan` | POST | token | JSON `{"uid", "content"}` 每周计划（周六至周一中午12点） |
 | `/api/daily_completion` | POST | token | JSON `{"uid", "date", "content"}` 每日完成情况 |
@@ -132,22 +153,29 @@ SQLite（`attendance.db` / `attendance_pre.db`），21 张表由 `db.py: ensure_
 - `templates/weekly_summary.html` — 周报摘要页（出勤/日报/周计划表格 + 翻页）
 - `templates/zgantt.html` — ZGantt 项目页（项目/成员管理 + 甘特图 + 考勤填报）
 - `templates/agrant.html` — AGrant 经费页（余额徽章高亮 + 每人流水倒序卡片 + 管理员页头「授予/追回」合一表单（互斥双金额输入，JS 按所填项切换提交目标）+ 申报/转赠内联展开表单 + 毕业 confirm modal，仿 okr.html）
+- `templates/api_usage.html` — API 用量页（平台和成员统计、按模型图表、Coding Plan Key 脱敏展示与领取操作）
 
 ## Configuration
 
 所有敏感配置集中在 `.config.yml`，由 `config.py`（服务端）和 `checkin_usb.py` 通过 `yaml.safe_load()` 统一读取：
 - 服务端：`db_path`、`secret_key`、`api_secret`、`allowed_checkin_ips`、`dingtalk_webhook_url`、`dingtalk_secret`
+- API 用量同步：在 `server.llm_usage_sync` 配置 `enabled`、Proxy 的 `base_url` 和只读 `dashboard_token`、独立绝对路径 `mirror_db_path`、`sync_start_month`；预发环境须单独配置 `pre.llm_usage_sync.mirror_db_path`，否则预发同步会被禁用
+- Coding Plan Key：在私有 `.config.yml` 的 `server.coding_plan_keys` 列表中配置 `id`、`platform`、`label`、`secret`；预发环境默认继承该列表，更换 Key 时保留 `id` 可保留已登记的使用人数
+- 升级已有部署时，先将旧 `.coding_plan_keys.yml` 的 `keys` 列表迁入 `.config.yml` 的 `server.coding_plan_keys`，再更新代码并重启服务；新版本不再读取旧文件
 - 端侧：`server_url`、`db_path`、`api_secret`
 
 部署流程：`cp config.example.yml .config.yml` → 编辑实际值
 
 `.config.yml` 和 `.users.txt` 已在 `.gitignore` 中，不会提交到仓库。
 
+`.config.yml` 由 `config.py` 在进程启动时读取，修改 Coding Plan Key 或用量同步设置后需重启 Dashboard 服务；`platform_models.yml` 由用量页面在每次请求时读取，修改展示文字后刷新页面即可。用量同步调度器内置于 Dashboard 进程；Gunicorn 多 worker 会分别启动调度器，部署时应使用单 worker。
+
 ## File List
 
 - `app.py` — 服务端入口（Flask app + Blueprint 注册 + APScheduler 定时任务）
-- `config.py` — 配置加载（.config.yml → 模块级全局）
-- `db.py` — 数据库连接与表初始化
+- `config.py` — 配置加载（.config.yml → 模块级全局）与 Coding Plan Key 校验、脱敏、使用登记
+- `db.py` — 主业务库连接与表初始化
+- `db_usage.py` — 独立用量镜像库连接、8 张表初始化与页面查询
 - `auth.py` — 认证基础设施（用户集、HMAC token、装饰器）
 - `helpers.py` — 业务辅助函数
 - `notifier.py` — 钉钉群机器人消息推送
@@ -158,11 +186,14 @@ SQLite（`attendance.db` / `attendance_pre.db`），21 张表由 `db.py: ensure_
 - `routes_okr.py` — Blueprint: OKR 管理
 - `routes_zgantt.py` — Blueprint: ZGantt 项目管理
 - `routes_agrant.py` — Blueprint: 学术交流经费（AGrant）管理
+- `routes_usage.py` — Blueprint: API 用量页面与平台卡片配置读取
+- `usage_sync.py` — Proxy 增量/全量同步、镜像写入及手动运行入口（`python usage_sync.py`）
+- `platform_models.yml` — 平台卡片的模型介绍和计费链接，修改后刷新页面生效
 - `checkin_usb.py` — 树莓派刷卡客户端
 - `templates/` — Jinja2 模板
 - `environment.yml` — Conda 环境定义（`flask_app`，Python 3.10）
 - `.config.yml` — 运行配置（敏感，不提交）
-- `config.example.yml` — 配置示例模板
+- `config.example.yml` — 配置示例模板，包含 Coding Plan Key 槽位
 - `.users.txt` — 合法用户名列表（敏感，不提交）
 - `.gitignore` — 忽略规则
 

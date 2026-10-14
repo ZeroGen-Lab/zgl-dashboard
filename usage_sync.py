@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 
 import requests
 
-from usage_mirror_db import connect, initialize, timestamp
+from db_usage import connect, initialize, timestamp
 
 LOG = logging.getLogger(__name__)
 MONTH_RE = re.compile(r'^[0-9]{4}-(0[1-9]|1[0-2])$')
@@ -535,3 +535,23 @@ def sync_usage(config, primary_path, session=None, now=None):
     finally:
         if own_session:
             session.close()
+
+
+def main():
+    """Run one manual sync from the command line."""
+    from config import DB_PATH, LLM_USAGE_SYNC
+
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
+    try:
+        result = sync_usage(LLM_USAGE_SYNC, DB_PATH)
+    except (SyncError, OSError, ValueError) as exc:
+        logging.error('LLM 用量同步失败：%s', exc)
+        return 1
+    logging.info('LLM 用量同步成功：%d 个月，%d 条明细，%d 条月汇总，清理 %d 条过期明细',
+                 result['months'], result['records'], result['summaries'],
+                 result.get('records_deleted', 0))
+    return 0
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())
