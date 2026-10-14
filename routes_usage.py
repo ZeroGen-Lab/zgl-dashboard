@@ -5,6 +5,7 @@ import secrets
 import sqlite3
 from calendar import monthrange
 from collections import defaultdict
+from contextlib import closing
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -13,6 +14,7 @@ import yaml
 
 from auth import is_admin, login_required
 from config import change_claim, claim_status, masked
+from db import get_db_connection
 from db_usage import SHANGHAI, read_dashboard, read_member_usage
 from usage_sync import SyncError, sync_usage, valid_month
 
@@ -71,6 +73,21 @@ def model_chart(series, dates):
     }
 
 
+def load_member_names():
+    """Map usage owner snapshots (login names) to names from the main database."""
+    try:
+        with closing(get_db_connection()) as conn:
+            rows = conn.execute('SELECT loginname, name FROM users').fetchall()
+    except sqlite3.Error as exc:
+        LOG.warning('无法读取成员姓名：%s', exc)
+        return {}
+    return {
+        row['loginname']: row['name'].strip()
+        for row in rows
+        if isinstance(row['name'], str) and row['name'].strip()
+    }
+
+
 @usage_bp.route('/api-usage')
 @login_required
 def api_usage():
@@ -118,12 +135,15 @@ def api_usage():
         platform = 'kimi' if platform == 'moonshot' else platform
         platform_models[platform][row['model']][row['usage_date']] += row['total_tokens']
         member_models[row['owner_snapshot']][f'{platform} · {row["model"]}'][row['usage_date']] += row['total_tokens']
-    members = [{'name': row['owner_snapshot'], 'total_tokens': row['total_tokens'],
+    member_names = load_member_names()
+    members = [{'loginname': row['owner_snapshot'],
+                'name': member_names.get(row['owner_snapshot'], row['owner_snapshot']),
+                'total_tokens': row['total_tokens'],
                 'chart_id': f'member-{index}'}
                for index, row in enumerate(member_data['monthly'])] if member_data else []
     model_charts = {f'platform-{card["id"]}': model_chart(platform_models[card['id']], recent_dates)
                     for card in cards}
-    model_charts.update({member['chart_id']: model_chart(member_models[member['name']], recent_dates)
+    model_charts.update({member['chart_id']: model_chart(member_models[member['loginname']], recent_dates)
                          for member in members})
     last_success = data['last_success'] if data else None
     stale = True

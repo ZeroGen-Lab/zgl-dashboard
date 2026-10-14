@@ -121,7 +121,7 @@
 
 <div class="card p-4 mb-4">
     <h5 class="mb-2">各成员模型用量</h5>
-    <p class="text-muted small mb-3">{{ month }} 月度总量按成员汇总；点击成员英文名查看近 7 天各模型的每日用量。</p>
+    <p class="text-muted small mb-3">{{ month }} 月度总量按成员汇总；点击成员姓名查看近 7 天各模型的每日用量。</p>
     {% if members %}
     {% for member in members %}
     <details class="usage-chart-panel border rounded mb-2" data-chart-id="{{ member.chart_id }}">

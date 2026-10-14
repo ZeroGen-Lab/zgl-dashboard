@@ -49,7 +49,7 @@ sudo python3 checkin_usb.py
 
 **数据同步流：** 读卡器 → 本地 DB 写入 → HTTP POST `/api/checkin`（带 HMAC token） → 服务端 DB 写入
 
-**API 用量数据流：** Proxy 只读统计接口 → `usage_sync.py` → `db_usage.py` 管理的独立 SQLite 镜像库 → `routes_usage.py` 读取并展示。用户打开页面不会即时请求 Proxy；Coding Plan Key 的完整值来自私有 `.config.yml`，领取记录保存在镜像库。
+**API 用量数据流：** Proxy 只读统计接口 → `usage_sync.py` → `db_usage.py` 管理的独立 SQLite 镜像库 → `routes_usage.py` 读取并展示。成员用量中的 `owner_snapshot` 按 `users.loginname` 映射主业务库的 `users.name`，页面优先显示中文姓名，未找到时回退登录名。用户打开页面不会即时请求 Proxy；Coding Plan Key 的完整值来自私有 `.config.yml`，领取记录保存在镜像库。
 
 **端侧与服务端的 `sign_ins` 表结构不同：**
 - 服务端：`id, loginname, card_uid, timestamp`（无 synced 字段）
