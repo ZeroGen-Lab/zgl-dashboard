@@ -84,8 +84,8 @@ _project_dir = os.path.dirname(os.path.abspath(__file__))
 
 
 def cli_option(name):
-    """Read options only when app.py is started directly, not by a WSGI server."""
-    if Path(sys.argv[0]).name != 'app.py' or name not in sys.argv:
+    """Read options from direct app or manual sync commands, not a WSGI server."""
+    if Path(sys.argv[0]).name not in ('app.py', 'usage_sync.py') or name not in sys.argv:
         return None
     index = sys.argv.index(name)
     if index + 1 >= len(sys.argv) or sys.argv[index + 1].startswith('--'):
