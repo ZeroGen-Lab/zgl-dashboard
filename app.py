@@ -85,7 +85,7 @@ def _usage_sync_job():
         result = sync_usage(LLM_USAGE_SYNC, DB_PATH)
         app.logger.info('API 用量同步完成：%s', result)
     except Exception as exc:
-        app.logger.error('API 用量同步失败：%s', exc if isinstance(exc, SyncError) else type(exc).__name__)
+        app.logger.error('API 用量同步失败：%s', exc if isinstance(exc, (SyncError, ValueError)) else type(exc).__name__)
 
 
 # 备份任务仅在生产环境注册（pre 环境的数据不备份，以免覆盖生产备份）
