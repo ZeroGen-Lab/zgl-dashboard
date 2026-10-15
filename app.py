@@ -1,5 +1,5 @@
 from flask import Flask
-from config import flask_config, PORT, DINGTALK_WEBHOOK_URL, ENV, DB_PATH, DB_BAK_DIR
+from config import flask_config, PORT, DINGTALK_WEBHOOK_URL, ENV, DB_PATH, DB_BAK_DIR, LLM_USAGE_SYNC
 from db import ensure_tables
 from routes_auth import auth_bp
 from routes_dashboard import dashboard_bp
@@ -7,6 +7,7 @@ from routes_booking import booking_bp
 from routes_api import api_bp
 from routes_okr import okr_bp
 from routes_zgantt import zgantt_bp
+from routes_usage import usage_bp
 from routes_agrant import agrant_bp
 
 app = Flask(__name__)
@@ -21,6 +22,7 @@ app.register_blueprint(booking_bp)
 app.register_blueprint(api_bp)
 app.register_blueprint(okr_bp)
 app.register_blueprint(zgantt_bp)
+app.register_blueprint(usage_bp)
 app.register_blueprint(agrant_bp)
 
 
@@ -76,16 +78,37 @@ def _db_backup_job():
             print(f"[db-backup] removed expired {f}")
 
 
+def _usage_sync_job():
+    """从 Proxy 的只读接口更新独立的 API 用量镜像库。"""
+    from usage_sync import SyncError, sync_usage
+    try:
+        result = sync_usage(LLM_USAGE_SYNC, DB_PATH)
+        app.logger.info('API 用量同步完成：%s', result)
+    except Exception as exc:
+        app.logger.error('API 用量同步失败：%s', exc if isinstance(exc, SyncError) else type(exc).__name__)
+
+
 # 备份任务仅在生产环境注册（pre 环境的数据不备份，以免覆盖生产备份）
 _need_backup = ENV == 'prod'
+_need_usage = ENV in ('prod', 'pre') and bool((LLM_USAGE_SYNC or {}).get('enabled'))
 _need_onsite_report = bool(DINGTALK_WEBHOOK_URL)
-if _need_backup or _need_onsite_report:
+if _need_backup or _need_onsite_report or _need_usage:
+    from datetime import datetime, timedelta, timezone
     from apscheduler.schedulers.background import BackgroundScheduler
+    _shanghai_tz = timezone(timedelta(hours=8))
     _scheduler = BackgroundScheduler()
     if _need_backup:
         _scheduler.add_job(_db_backup_job, 'cron', hour=6, minute=0)
     if _need_onsite_report:
         _scheduler.add_job(_onsite_report_job, 'cron', day_of_week='mon', hour=18, minute=30)
+    if _need_usage:
+        _scheduler.add_job(_usage_sync_job, 'cron', hour='0,3,6,9,12,15,18,21', minute=0,
+                           timezone=_shanghai_tz,
+                           id='usage_sync', coalesce=True, max_instances=1)
+        # 启动后补一次同步，页面无需等待下一个三小时整点。
+        _scheduler.add_job(_usage_sync_job, 'date',
+                           run_date=datetime.now(_shanghai_tz) + timedelta(seconds=2),
+                           id='usage_sync_startup')
     _scheduler.start()
 
 if __name__ == '__main__':

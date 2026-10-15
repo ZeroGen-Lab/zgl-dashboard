@@ -15,12 +15,44 @@ server:
   dingtalk_secret: SEC_YOUR_SIGN_SECRET_HERE
   deepseek_api_key: YOUR_DEEPSEEK_API_KEY
   deepseek_base_url: https://api.deepseek.com
+  # Coding Plan Key 填在私有 .config.yml 中。id 必须稳定且唯一，更换 Key 时保留 id 可保留使用人数。
+  # 在 secret 填入完整 Key 后重启 Dashboard；领取人数存放在 llm_usage_sync.mirror_db_path 指向的独立用量数据库中。
+  coding_plan_keys:
+    - id: deepseek-coding-1
+      platform: deepseek
+      label: DeepSeek Coding Plan 1
+      secret: ''
+    - id: zhipu-coding-1
+      platform: zhipu
+      label: 智谱 Coding Plan 1
+      secret: ''
+    - id: zhipu-coding-2
+      platform: zhipu
+      label: 智谱 Coding Plan 2
+      secret: ''
+    - id: zhipu-coding-3
+      platform: zhipu
+      label: 智谱 Coding Plan 3
+      secret: ''
+
+  # 新增 API 用量功能只读 Proxy 统计，不需要厂商 API Key；上面的 DeepSeek 配置供旧摘要功能使用。
+  llm_usage_sync:
+    # 示例地址和令牌尚未填写，先关闭；部署时填好以下配置再改为 true。
+    enabled: false
+    base_url: https://YOUR_PROXY_HOST
+    dashboard_token: REPLACE_WITH_RANDOM_DASHBOARD_SERVICE_TOKEN
+    mirror_db_path: /zero/zgl-dashboard-data/llm_usage_mirror.db
+    timeout_seconds: 20
+    sync_start_month: '2026-10'
 
 # 预发环境配置（python app.py pre 或 ZGL_ENV=pre python app.py）
 # 未指定的字段回退到 server 的值
 pre:
   db_path: attendance_pre.db
   port: 5001
+  llm_usage_sync:
+    enabled: false
+    mirror_db_path: /zero/zgl-dashboard-data/llm_usage_mirror_pre.db
 
 # 端侧（树莓派）配置
 client:
