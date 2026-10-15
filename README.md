@@ -53,6 +53,8 @@ echo "your_username" > .users.txt
 ```bash
 python app.py       # 直接启动，0.0.0.0:5000
 python app.py pre   # 预发环境（本地测试用），端口与库见 .config.yml
+python app.py pre --config .config_new.yml  # 使用独立配置调试预发
+python usage_sync.py pre --config .config_new.yml  # 用同一份配置手动同步一次预发用量
 ```
 
 生产环境建议 gunicorn + systemd 部署.

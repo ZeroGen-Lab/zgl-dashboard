@@ -98,17 +98,21 @@ def api_usage():
     options = current_app.config.get('LLM_USAGE_SYNC') or {}
     data = read_dashboard(options.get('mirror_db_path'), month)
     platforms = data['platforms'] if data else []
-    platform_totals = defaultdict(int)
+    platform_totals = defaultdict(lambda: {'total': 0, 'input': 0, 'output': 0})
     observed_platforms = set()
     for row in platforms:
         platform = row['platform'].lower()
         platform = 'kimi' if platform == 'moonshot' else platform
-        platform_totals[platform] += row['total_tokens']
+        platform_totals[platform]['total'] += row['total_tokens']
+        platform_totals[platform]['input'] += row['input_tokens']
+        platform_totals[platform]['output'] += row['output_tokens']
         observed_platforms.add(platform)
     coding_keys = current_app.config.get('CODING_PLAN_KEYS') or []
     counts, claimed = claim_status(options.get('mirror_db_path'), session['user']) if coding_keys else ({}, set())
     platform_info = load_platform_info()
-    cards = [{**card, 'tokens': platform_totals[card['id']],
+    cards = [{**card, 'tokens': platform_totals[card['id']]['total'],
+              'input_tokens': platform_totals[card['id']]['input'],
+              'output_tokens': platform_totals[card['id']]['output'],
               'info': platform_info.get(card['id'], {}),
               'base_url': f'{PROXY_PUBLIC_BASE_URL}/api/llm/{card["id"]}/v1'
               if card['id'] != 'kimi' else None,

@@ -19,7 +19,7 @@
 <div class="card p-4 mb-4">
     <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-3">
         <div>
-            <h4 class="mb-1">API 用量</h4>
+            <h4 class="mb-1">API keys 及用量管理</h4>
             <div class="text-muted">多平台 Token 使用情况 · 北京时间</div>
         </div>
         <div class="d-flex flex-wrap align-items-center gap-2">
@@ -66,8 +66,16 @@
                         <p class="text-muted small mb-0" data-chart-empty hidden>近 7 天暂无调用记录。</p>
                     </div>
                 </details>
-                <div class="text-muted small mt-3">本月消耗 Token</div>
-                <div class="fs-3 fw-bold usage-token-total">{{ '{:,}'.format(card.tokens) }}</div>
+                <div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mt-3">
+                    <div>
+                        <div class="text-muted small">本月消耗 Token</div>
+                        <div class="fs-3 fw-bold usage-token-total">{{ '{:,}'.format(card.tokens) }}</div>
+                    </div>
+                    <div class="text-muted small text-end text-nowrap ms-auto">
+                        <div>input：{{ '{:,}'.format(card.input_tokens) }}</div>
+                        <div>output：{{ '{:,}'.format(card.output_tokens) }}</div>
+                    </div>
+                </div>
                 <div class="small mt-2 mb-2 usage-base-url">
                     <span class="text-muted">推荐 Base URL：</span>
                     {% if card.base_url %}<code>{{ card.base_url }}</code>{% else %}<span class="text-muted">暂无（待接入）</span>{% endif %}
