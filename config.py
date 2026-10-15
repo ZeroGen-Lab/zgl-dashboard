@@ -81,6 +81,18 @@ def get_env():
 
 ENV = get_env()
 _project_dir = os.path.dirname(os.path.abspath(__file__))
+
+
+def cli_option(name):
+    """Read options only when app.py is started directly, not by a WSGI server."""
+    if Path(sys.argv[0]).name != 'app.py' or name not in sys.argv:
+        return None
+    index = sys.argv.index(name)
+    if index + 1 >= len(sys.argv) or sys.argv[index + 1].startswith('--'):
+        raise RuntimeError(f'{name} 缺少参数值')
+    return sys.argv[index + 1]
+
+
 if ENV == 'test':
     import secrets
     _test_db = os.environ.get('ZGL_TEST_DB_PATH')
@@ -96,7 +108,7 @@ if ENV == 'test':
     }
     USERS_PATH = os.environ.get('ZGL_TEST_USERS_PATH', _test_db + '.users.txt')
 else:
-    _config_path = os.path.join(_project_dir, '.config.yml')
+    _config_path = cli_option('--config') or os.path.join(_project_dir, '.config.yml')
     with open(_config_path, encoding='utf-8') as f:
         _config = yaml.safe_load(f)
     _server = _config['server']
