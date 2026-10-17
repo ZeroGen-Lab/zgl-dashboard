@@ -1,5 +1,9 @@
 # 平台卡片中的模型介绍。修改后刷新 API 用量页面即可生效，无需重启服务。
 # 每个平台可编辑 title、lines、note 和 pricing_url；lines 按顺序显示。
+# 平台顶层字段为参考价格说明；deepseek/zhipu 的 coding_plan 下同名字段为 Coding Plan 说明。
+# 个人令牌提示；设为 '' 可隐藏，修改后刷新即可生效。
+member_token_note: ''
+
 platforms:
   bailian:
     title: 千问 3.8 系列 · 每百万 Token
@@ -17,15 +21,31 @@ platforms:
       - '高峰：缓存命中输入 ¥0.04；未命中 ¥2；输出 ¥8'
     note: 高峰为北京时间工作日 09:00–12:00、14:00–18:00；其他时段为空闲。实际模型若为 Pro，价格不同。
     pricing_url: https://api-docs.deepseek.com/zh-cn/quick_start/pricing/
+    coding_plan:
+      title: ''
+      lines:
+        - '按照官方文档接入，不接受转发。'
+        - '领取 Key 后计入使用人数；不再使用时可以取消登记。'
+      note: ''
+      pricing_url: ''
 
   zhipu:
-    title: GLM-5.3 · Coding Plan 团队版积分
+    title: GLM-5.3 · 模型用量
     lines:
-      - '标准版：15,000 / 5 小时；66,000 / 周'
-      - '高级版：35,000 / 5 小时；155,000 / 周'
-      - '积分 =（普通输入 × 6.9 + 缓存命中输入 × 1.7 + 输出 × 24）÷ 10,000（GLM-5.3）'
-    note: 高峰为北京时间工作日 14:00–18:00；非高峰积分减半。
-    pricing_url: https://docs.bigmodel.cn/cn/coding-plan/team
+      - '上方展示本月累计 Token 用量；点击卡片标题查看近 7 天各模型每日用量。'
+    note: ''
+    pricing_url: ''
+    coding_plan:
+      title: GLM-5.3 · Coding Plan 团队版积分
+      lines:
+        - '标准版：15,000 / 5 小时；66,000 / 周'
+        - '高级版：35,000 / 5 小时；155,000 / 周'
+        - '积分 =（普通输入 × 6.9 + 缓存命中输入 × 1.7 + 输出 × 24）÷ 10,000（GLM-5.3）'
+        - '按照官方文档接入，不接受转发。'
+        - '领取 Key 后计入使用人数；不再使用时可以取消登记。'
+        - '每人只能登记一个智谱 Key；切换前请先停止使用当前 Key。'
+      note: 高峰为北京时间工作日 14:00–18:00；非高峰积分减半。
+      pricing_url: https://docs.bigmodel.cn/cn/coding-plan/team
 
   kimi:
     title: 预备参考：最新旗舰 Kimi K3 · 每百万 Token

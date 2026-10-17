@@ -6,6 +6,7 @@
     .usage-platform-card .usage-chart-panel summary .fw-bold { color: #2867aa; }
     .usage-platform-card .usage-chart-chevron { color: #5c94d1; }
     .usage-platform-card .usage-token-total { color: #285f9d; }
+    .usage-section-title { color: #2867aa; font-size: .95rem; font-weight: 700; }
     .usage-chart-panel summary { list-style: none; cursor: pointer; }
     .usage-chart-panel summary::-webkit-details-marker { display: none; }
     .usage-chart-chevron { display: inline-block; transform: rotate(0deg); }
@@ -18,20 +19,7 @@
 </style>
 {% endblock %}
 {% block content %}
-<section class="card p-4 mb-4" aria-labelledby="member-token-title">
-    <h5 id="member-token-title" class="mb-2">我的 API 令牌</h5>
-    <p class="small text-muted mb-2">用户名：<strong>{{ member_username }}</strong>。调用时将下方完整令牌填入 API Key，无需添加姓名或 sk- 前缀。请勿分享给他人。</p>
-    {% if member_token %}
-    <div class="d-flex flex-wrap align-items-center gap-2">
-        <input id="member-api-token" class="form-control font-monospace flex-grow-1" style="min-width: 0; flex-basis: 28rem;" type="text" value="{{ member_token }}" aria-label="我的完整 API 令牌" autocomplete="off" spellcheck="false" readonly>
-        <button id="member-token-copy" class="btn btn-outline-primary text-nowrap" type="button">复制令牌</button>
-    </div>
-    <div id="member-token-message" class="small mt-2" role="status" aria-live="polite"></div>
-    <p class="small text-muted mb-0 mt-2">Proxy 启用新令牌认证后可使用；尚未启用时请继续使用管理员分配的原令牌。</p>
-    {% else %}
-    <p class="text-muted mb-0">个人令牌尚未配置，请联系管理员。</p>
-    {% endif %}
-</section>
+
 <div class="card p-4 mb-4">
     <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-3">
         <div>
@@ -63,6 +51,21 @@
     <div class="text-warning small mt-2">最近一次同步状态：{{ '同步中' if latest.status == 'running' else ('部分完成' if latest.status == 'partial' else '失败') }}。当前仍显示已保存的数据。</div>
     {% endif %}
 </div>
+
+<section class="card p-4 mb-4" aria-labelledby="member-token-title">
+    <h5 id="member-token-title" class="mb-2">我的 API 令牌</h5>
+    <p class="small text-muted mb-2">调用时将下方完整令牌填入 API Key，无需添加姓名或 sk- 前缀。<strong>请勿分享给他人。</strong></p>
+    {% if member_token %}
+    <div class="d-flex flex-wrap align-items-center gap-2">
+        <input id="member-api-token" class="form-control font-monospace flex-grow-1" style="min-width: 0; flex-basis: 28rem;" type="text" value="{{ member_token }}" aria-label="我的完整 API 令牌" autocomplete="off" spellcheck="false" readonly>
+        <button id="member-token-copy" class="btn btn-outline-primary text-nowrap" type="button"> 全选 </button>
+    </div>
+    <div id="member-token-message" class="small mt-2" role="status" aria-live="polite"></div>
+    {% if member_token_note %}<p class="small text-muted mb-0 mt-2">{{ member_token_note }}</p>{% endif %}
+    {% else %}
+    <p class="text-muted mb-0">个人令牌尚未配置，请联系管理员。</p>
+    {% endif %}
+</section>
 
 <section class="mb-4">
     <h5 class="mb-3">{{ month }} 平台月度用量</h5>
@@ -97,6 +100,7 @@
                     {% if card.base_url %}<code>{{ card.base_url }}</code>{% else %}<span class="text-muted">暂无（待接入）</span>{% endif %}
                 </div>
                 <div class="border-top mt-2 pt-2 small flex-grow-1">
+                    <div class="usage-section-title mb-2">参考价格</div>
                     {% if card.info %}
                     {% if card.info.title %}<div class="fw-semibold">{{ card.info.title }}</div>{% endif %}
                     {% for line in card.info.lines %}<div>{{ line }}</div>{% endfor %}
@@ -104,16 +108,26 @@
                     {% else %}
                     <div class="text-muted">暂无模型介绍。</div>
                     {% endif %}
-                </div>
                 {% if card.info.pricing_url %}
-                <a class="small mt-2" href="{{ card.info.pricing_url }}" target="_blank" rel="noopener noreferrer">查看官方计费规则 <i class="bi bi-box-arrow-up-right"></i></a>
+                <a class="d-inline-block mt-2" href="{{ card.info.pricing_url }}" target="_blank" rel="noopener noreferrer">查看官方计费规则 <i class="bi bi-box-arrow-up-right"></i></a>
                 {% endif %}
+                {% if card.id in ('deepseek', 'zhipu') %}
+                    <hr class="my-3">
+                    <div class="usage-section-title mb-2">Coding Plan 说明</div>
+                    {% set plan = card.info.coding_plan %}
+                    {% if plan %}
+                    {% if plan.title %}<div class="fw-semibold">{{ plan.title }}</div>{% endif %}
+                    {% for line in plan.lines %}<div>{{ line }}</div>{% endfor %}
+                    {% if plan.note %}<div class="text-muted mt-1">{{ plan.note }}</div>{% endif %}
+                    {% if plan.pricing_url %}<a class="d-inline-block mt-2" href="{{ plan.pricing_url }}" target="_blank" rel="noopener noreferrer">查看 Coding Plan 官方说明 <i class="bi bi-box-arrow-up-right"></i></a>{% endif %}
+                    {% endif %}
+                {% endif %}
+                </div>
                 {% if card.id in ('deepseek', 'zhipu') %}
                 <div class="border-top mt-3 pt-3">
                     <div class="fw-semibold small mb-1">Coding Plan Key</div>
-                    <div class="text-muted small mb-2">按照官方文档接入，不接受转发。领取key后计入使用人数；不再使用时可以取消登记。</div>
                     {% for key in card.coding_keys %}
-                    <div class="coding-plan-key py-2 border-bottom" data-key-id="{{ key.id }}">
+                    <div class="coding-plan-key py-2 border-bottom" data-key-id="{{ key.id }}" data-key-platform="{{ card.id }}" data-key-claimed="{{ 'true' if key.claimed else 'false' }}">
                         <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
                             <div class="small">
                                 <span class="fw-semibold">{{ key.label }}</span>
@@ -122,8 +136,8 @@
                             </div>
                             <div class="d-flex flex-wrap gap-2 ms-auto">
                                 {% if key.configured %}
-                                <button type="button" class="btn btn-sm btn-outline-primary" data-key-action="claim" {% if key.claimed %}hidden{% endif %}>＋ 登记使用并显示 Key</button>
-                                <button type="button" class="btn btn-sm btn-outline-primary" data-key-action="reveal" {% if not key.claimed %}hidden{% endif %}>复制完整 Key</button>
+                                <button type="button" class="btn btn-sm btn-outline-primary" data-key-action="claim" {% if key.claimed %}hidden{% endif %} {% if key.blocked %}disabled title="请先停止使用已登记的智谱 Key"{% endif %}>＋ 登记使用并显示 Key</button>
+                                <button type="button" class="btn btn-sm btn-outline-primary" data-key-action="reveal" {% if not key.claimed %}hidden{% endif %}> 全选 </button>
                                 <button type="button" class="btn btn-sm btn-outline-secondary" data-key-action="release" {% if not key.claimed %}hidden{% endif %}>停止使用</button>
                                 {% else %}<span class="text-muted small">填写完整 Key 后可领取</span>{% endif %}
                             </div>
@@ -200,17 +214,11 @@ print(response.choices[0].message.content)</code></pre>
     if (!input || !button) return;
     const message = document.getElementById('member-token-message');
     input.addEventListener('click', () => input.select());
-    button.addEventListener('click', async () => {
-        try {
-            if (!navigator.clipboard || !window.isSecureContext) throw new Error('clipboard unavailable');
-            await navigator.clipboard.writeText(input.value);
-            message.textContent = '个人令牌已复制。';
-        } catch (error) {
-            input.focus();
-            input.select();
-            input.setSelectionRange(0, input.value.length);
-            message.textContent = '令牌已全选，请按 Ctrl+C（Mac：⌘C）或长按复制。';
-        }
+    button.addEventListener('click', () => {
+        input.focus();
+        input.select();
+        input.setSelectionRange(0, input.value.length);
+        message.textContent = '令牌已全选，请按 Ctrl+C（⌘C）复制。';
     });
 })();
 </script>
@@ -303,6 +311,19 @@ print(response.choices[0].message.content)</code></pre>
 <script>
 (function () {
     const csrf = {{ coding_plan_csrf | tojson }};
+    const rows = [...document.querySelectorAll('.coding-plan-key')];
+    function updateButtons() {
+        const zhipuClaimed = rows.some(row => row.dataset.keyPlatform === 'zhipu' && row.dataset.keyClaimed === 'true');
+        const zhipuBusy = rows.some(row => row.dataset.keyPlatform === 'zhipu' && row.dataset.busy === 'true');
+        rows.forEach(row => {
+            const blocked = row.dataset.keyPlatform === 'zhipu' && zhipuClaimed && row.dataset.keyClaimed !== 'true';
+            row.querySelectorAll('[data-key-action]').forEach(button => {
+                button.disabled = row.dataset.busy === 'true' || blocked || (row.dataset.keyPlatform === 'zhipu' && zhipuBusy);
+                button.title = blocked ? '请先停止使用已登记的智谱 Key' : '';
+            });
+        });
+    }
+    updateButtons();
     document.querySelectorAll('.coding-plan-key').forEach(row => {
         const manual = row.querySelector('[data-key-manual-copy]');
         manual.addEventListener('click', () => manual.select());
@@ -310,8 +331,8 @@ print(response.choices[0].message.content)</code></pre>
             button.addEventListener('click', async () => {
                 const action = button.dataset.keyAction;
                 const message = row.querySelector('[data-key-message]');
-                const buttons = row.querySelectorAll('[data-key-action]');
-                buttons.forEach(item => item.disabled = true);
+                row.dataset.busy = 'true';
+                updateButtons();
                 message.textContent = '';
                 try {
                     const response = await fetch(`/api-usage/coding-keys/${encodeURIComponent(row.dataset.keyId)}/${action}`, {
@@ -322,6 +343,7 @@ print(response.choices[0].message.content)</code></pre>
                     });
                     const result = await response.json();
                     if (!response.ok) throw new Error(result.error || '操作失败，请重试');
+                    row.dataset.keyClaimed = String(result.claimed);
                     row.querySelector('[data-key-count]').textContent = `${result.count} 人使用`;
                     row.querySelector('[data-key-action="claim"]').hidden = result.claimed;
                     row.querySelector('[data-key-action="reveal"]').hidden = !result.claimed;
@@ -329,19 +351,10 @@ print(response.choices[0].message.content)</code></pre>
                     if (result.secret) {
                         manual.value = result.secret;
                         manual.hidden = false;
-                        if (action === 'claim') {
-                            message.textContent = '已登记使用，完整 Key 已显示，点击可全选复制。';
-                            return;
-                        }
-                        try {
-                            if (!navigator.clipboard || !window.isSecureContext) throw new Error('clipboard unavailable');
-                            await navigator.clipboard.writeText(result.secret);
-                            message.textContent = '完整 Key 已复制到剪贴板。';
-                        } catch (error) {
-                            manual.focus();
-                            manual.select();
-                            message.textContent = '浏览器无法自动复制。下方完整 Key 已选中，请按 Ctrl+C 复制。';
-                        }
+                        manual.focus();
+                        manual.select();
+                        manual.setSelectionRange(0, manual.value.length);
+                        message.textContent = '完整 Key 已全选，请按 Ctrl+C（⌘C）复制。';
                     } else {
                         manual.hidden = true;
                         manual.value = '';
@@ -350,7 +363,8 @@ print(response.choices[0].message.content)</code></pre>
                 } catch (error) {
                     message.textContent = error.message;
                 } finally {
-                    buttons.forEach(item => item.disabled = false);
+                    row.dataset.busy = 'false';
+                    updateButtons();
                 }
             });
         });
