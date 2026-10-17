@@ -75,7 +75,7 @@ def load_platform_info(path=INFO_PATH, *, content=None):
 
 
 def model_chart(series, dates):
-    """Prepare seven stacked daily bars, one segment per model."""
+    """Prepare stacked daily bars for the selected calendar month."""
     return {
         'labels': [date[5:] for date in reversed(dates)],
         'models': [
@@ -105,6 +105,11 @@ def load_member_names():
 def api_usage():
     today = datetime.now(SHANGHAI)
     month = request.args.get('month') or today.strftime('%Y-%m')
+    if request.args.get('year') and request.args.get('month_number'):
+        try:
+            month = f"{int(request.args['year']):04d}-{int(request.args['month_number']):02d}"
+        except ValueError:
+            month = today.strftime('%Y-%m')
     if not valid_month(month):
         month = today.strftime('%Y-%m')
     options = current_app.config.get('LLM_USAGE_SYNC') or {}
@@ -145,11 +150,10 @@ def api_usage():
               'has_data': card['id'] in observed_platforms}
              for card in PLATFORM_CARDS]
     year, month_number = map(int, month.split('-'))
-    chart_end = (today.date() if month == today.strftime('%Y-%m') else
-                 date(year, month_number, monthrange(year, month_number)[1]))
-    recent_dates = [(chart_end - timedelta(days=offset)).isoformat() for offset in range(7)]
+    chart_end = date(year, month_number, monthrange(year, month_number)[1])
+    chart_dates = [(chart_end - timedelta(days=offset)).isoformat() for offset in range(chart_end.day)]
     member_data = read_member_usage(options.get('mirror_db_path'), month,
-                                    max(recent_dates[-1], month + '-01'),
+                                    month + '-01',
                                     (chart_end + timedelta(days=1)).isoformat())
     platform_models = defaultdict(lambda: defaultdict(lambda: defaultdict(int)))
     member_models = defaultdict(lambda: defaultdict(lambda: defaultdict(int)))
@@ -164,9 +168,9 @@ def api_usage():
                 'total_tokens': row['total_tokens'],
                 'chart_id': f'member-{index}'}
                for index, row in enumerate(member_data['monthly'])] if member_data else []
-    model_charts = {f'platform-{card["id"]}': model_chart(platform_models[card['id']], recent_dates)
+    model_charts = {f'platform-{card["id"]}': model_chart(platform_models[card['id']], chart_dates)
                     for card in cards}
-    model_charts.update({member['chart_id']: model_chart(member_models[member['loginname']], recent_dates)
+    model_charts.update({member['chart_id']: model_chart(member_models[member['loginname']], chart_dates)
                          for member in members})
     last_success = data['last_success'] if data else None
     stale = True
@@ -190,9 +194,11 @@ def api_usage():
                            member_username=session['user'], member_token=member_token,
                            member_token_note=member_token_note,
                            cards=cards, members=members,
+                           selected_year=year, selected_month=month_number,
+                           available_years=range(min(2000, year), max(today.year + 5, year) + 1),
                            is_current_month=month == today.strftime('%Y-%m'),
                            proxy_public_base_url=PROXY_PUBLIC_BASE_URL,
-                           recent_dates=recent_dates, model_charts=model_charts,
+                           chart_dates=chart_dates, model_charts=model_charts,
                            coding_plan_csrf=csrf, usage_sync_csrf=sync_csrf,
                            is_admin=is_admin(),
                            latest=data['latest'] if data else None,
