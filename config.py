@@ -53,10 +53,23 @@ def claim_status(path, username):
         return {}, set()
 
 
-def change_claim(path, primary_path, key_id, username, action):
+class ClaimConflict(ValueError):
+    pass
+
+
+def change_claim(path, primary_path, key_id, username, action, exclusive_ids=()):
     initialize_usage_mirror(path, primary_path)
     with closing(connect(path)) as conn, conn:
+        conn.execute('BEGIN IMMEDIATE')
         if action == 'claim':
+            if exclusive_ids:
+                placeholders = ','.join('?' for _ in exclusive_ids)
+                other = conn.execute(
+                    f'SELECT 1 FROM coding_plan_claims WHERE username=? AND key_id<>? '
+                    f'AND key_id IN ({placeholders}) LIMIT 1',
+                    (username, key_id, *exclusive_ids)).fetchone()
+                if other:
+                    raise ClaimConflict('每人只能登记一个智谱 Key，请先停止使用已登记的 Key。')
             conn.execute('INSERT OR IGNORE INTO coding_plan_claims(key_id,username) VALUES (?,?)',
                          (key_id, username))
         elif action == 'release':
@@ -121,6 +134,9 @@ PORT = _effective['port']
 API_SECRET = _effective['api_secret']
 ALLOWED_CHECKIN_IPS = _effective['allowed_checkin_ips']
 SECRET_KEY = _effective['secret_key']
+MEMBER_TOKEN_SECRET = _effective.get('member_token_secret', '')
+if not isinstance(MEMBER_TOKEN_SECRET, str):
+    raise ValueError('member_token_secret must be a string')
 DINGTALK_WEBHOOK_URL = _effective.get('dingtalk_webhook_url', '')
 DINGTALK_SECRET = _effective.get('dingtalk_secret', '')
 DEEPSEEK_API_KEY = _effective.get('deepseek_api_key', '')
@@ -146,6 +162,7 @@ flask_config = {
     'DB_BAK_DIR': DB_BAK_DIR,
     'ALLOWED_CHECKIN_IPS': ALLOWED_CHECKIN_IPS,
     'SECRET_KEY': SECRET_KEY,
+    'MEMBER_TOKEN_SECRET': MEMBER_TOKEN_SECRET,
     'DINGTALK_WEBHOOK_URL': DINGTALK_WEBHOOK_URL,
     'DINGTALK_SECRET': DINGTALK_SECRET,
     'DEEPSEEK_API_KEY': DEEPSEEK_API_KEY,
