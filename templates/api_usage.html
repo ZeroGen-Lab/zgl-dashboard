@@ -7,7 +7,8 @@
     .usage-platform-card .usage-token-total { color: #285f9d; }
     .usage-chart-panel summary { list-style: none; cursor: pointer; }
     .usage-chart-panel summary::-webkit-details-marker { display: none; }
-    .usage-chart-panel[open] .usage-chart-chevron { transform: rotate(180deg); }
+    .usage-chart-chevron { display: inline-block; transform: rotate(0deg); }
+    .usage-chart-panel[open] > summary .usage-chart-chevron { transform: rotate(180deg); }
     .usage-chart { position: relative; height: 230px; }
     .usage-base-url { overflow-wrap: anywhere; }
     .usage-example { background: #f5f8fb; border: 1px solid #dce6ef; border-radius: .5rem; overflow-x: auto; }
@@ -16,6 +17,20 @@
 </style>
 {% endblock %}
 {% block content %}
+<section class="card p-4 mb-4" aria-labelledby="member-token-title">
+    <h5 id="member-token-title" class="mb-2">我的 API 令牌</h5>
+    <p class="small text-muted mb-2">用户名：<strong>{{ member_username }}</strong>。调用时将下方完整令牌填入 API Key，无需添加姓名或 sk- 前缀。请勿分享给他人。</p>
+    {% if member_token %}
+    <div class="d-flex flex-wrap align-items-center gap-2">
+        <input id="member-api-token" class="form-control font-monospace flex-grow-1" style="min-width: 0; flex-basis: 28rem;" type="text" value="{{ member_token }}" aria-label="我的完整 API 令牌" autocomplete="off" spellcheck="false" readonly>
+        <button id="member-token-copy" class="btn btn-outline-primary text-nowrap" type="button">复制令牌</button>
+    </div>
+    <div id="member-token-message" class="small mt-2" role="status" aria-live="polite"></div>
+    <p class="small text-muted mb-0 mt-2">Proxy 启用新令牌认证后可使用；尚未启用时请继续使用管理员分配的原令牌。</p>
+    {% else %}
+    <p class="text-muted mb-0">个人令牌尚未配置，请联系管理员。</p>
+    {% endif %}
+</section>
 <div class="card p-4 mb-4">
     <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-3">
         <div>
@@ -106,14 +121,14 @@
                             </div>
                             <div class="d-flex flex-wrap gap-2 ms-auto">
                                 {% if key.configured %}
-                                <button type="button" class="btn btn-sm btn-outline-primary" data-key-action="claim" {% if key.claimed %}hidden{% endif %}>＋ 使用并复制</button>
+                                <button type="button" class="btn btn-sm btn-outline-primary" data-key-action="claim" {% if key.claimed %}hidden{% endif %}>＋ 登记使用并显示 Key</button>
                                 <button type="button" class="btn btn-sm btn-outline-primary" data-key-action="reveal" {% if not key.claimed %}hidden{% endif %}>复制完整 Key</button>
                                 <button type="button" class="btn btn-sm btn-outline-secondary" data-key-action="release" {% if not key.claimed %}hidden{% endif %}>停止使用</button>
                                 {% else %}<span class="text-muted small">填写完整 Key 后可领取</span>{% endif %}
                             </div>
                         </div>
                         <div class="small" data-key-message aria-live="polite"></div>
-                        <input class="form-control form-control-sm mt-2" type="password" data-key-manual-copy aria-label="手动复制完整 Key" autocomplete="off" readonly hidden>
+                        <input class="form-control form-control-sm mt-2 font-monospace" type="text" data-key-manual-copy aria-label="完整 Key（可选中复制）" autocomplete="off" spellcheck="false" readonly value="{{ key.secret }}" {% if not key.claimed or not key.secret %}hidden{% endif %}>
                     </div>
                     {% else %}
                     <div class="text-muted small">尚未配置可领取的 Coding Plan Key。</div>
@@ -154,7 +169,7 @@
 </div>
 <section class="card p-4 mb-4" aria-labelledby="usage-guide-title">
     <h5 id="usage-guide-title" class="mb-2">如何调用</h5>
-    <p class="small mb-2">每位成员使用自己的 Proxy Token，例如 <code><b>sk-zhangsan</b></code>（姓名部分全小写、无空格）。百炼真实 Key 由 Proxy 统一保管，所有成员通过自己的 <code>sk-name</code> 调用，无需申请或配置个人百炼 Key。安装 Python SDK：<code>pip install openai</code>。</p>
+    <p class="small mb-2">每位成员使用页面顶部的个人 API 令牌（需 Proxy 启用新令牌认证），将其保存到环境变量 <code>ZGL_MEMBER_TOKEN</code>。百炼真实 Key 由 Proxy 统一保管，无需申请或配置个人百炼 Key。安装 Python SDK：<code>pip install openai</code>。</p>
     <p class="small mb-2">将自己的 Token 放入环境变量 <code>ZGL_MEMBER_TOKEN</code> 后，以 DeepSeek 为例：</p>
     <pre class="usage-example p-3 mb-2"><code>import os
 from openai import OpenAI
@@ -177,6 +192,27 @@ print(response.choices[0].message.content)</code></pre>
     <p class="small mb-2">智谱、DeepSeek 的 Coding Plan Key 若在上方领取，则<strong>按各平台官方文档直连</strong>，不使用这里的 Proxy Base URL。</p>
     <p class="text-muted small mb-0">Base URL 到 <code>/v1</code> 为止，SDK 会补上 <code>/chat/completions</code>。请不要把厂商 Key 或 Dashboard Token 填入示例，也不要把自己的成员 Token 提交到仓库。</p>
 </section>
+<script>
+(function () {
+    const input = document.getElementById('member-api-token');
+    const button = document.getElementById('member-token-copy');
+    if (!input || !button) return;
+    const message = document.getElementById('member-token-message');
+    input.addEventListener('click', () => input.select());
+    button.addEventListener('click', async () => {
+        try {
+            if (!navigator.clipboard || !window.isSecureContext) throw new Error('clipboard unavailable');
+            await navigator.clipboard.writeText(input.value);
+            message.textContent = '个人令牌已复制。';
+        } catch (error) {
+            input.focus();
+            input.select();
+            input.setSelectionRange(0, input.value.length);
+            message.textContent = '令牌已全选，请按 Ctrl+C（Mac：⌘C）或长按复制。';
+        }
+    });
+})();
+</script>
 <script>
 (function () {
     const charts = {{ model_charts | tojson }};
@@ -256,16 +292,15 @@ print(response.choices[0].message.content)</code></pre>
 (function () {
     const csrf = {{ coding_plan_csrf | tojson }};
     document.querySelectorAll('.coding-plan-key').forEach(row => {
+        const manual = row.querySelector('[data-key-manual-copy]');
+        manual.addEventListener('click', () => manual.select());
         row.querySelectorAll('[data-key-action]').forEach(button => {
             button.addEventListener('click', async () => {
                 const action = button.dataset.keyAction;
                 const message = row.querySelector('[data-key-message]');
-                const manual = row.querySelector('[data-key-manual-copy]');
                 const buttons = row.querySelectorAll('[data-key-action]');
                 buttons.forEach(item => item.disabled = true);
                 message.textContent = '';
-                manual.hidden = true;
-                manual.value = '';
                 try {
                     const response = await fetch(`/api-usage/coding-keys/${encodeURIComponent(row.dataset.keyId)}/${action}`, {
                         method: 'POST',
@@ -280,18 +315,24 @@ print(response.choices[0].message.content)</code></pre>
                     row.querySelector('[data-key-action="reveal"]').hidden = !result.claimed;
                     row.querySelector('[data-key-action="release"]').hidden = !result.claimed;
                     if (result.secret) {
+                        manual.value = result.secret;
+                        manual.hidden = false;
+                        if (action === 'claim') {
+                            message.textContent = '已登记使用，完整 Key 已显示，点击可全选复制。';
+                            return;
+                        }
                         try {
                             if (!navigator.clipboard || !window.isSecureContext) throw new Error('clipboard unavailable');
                             await navigator.clipboard.writeText(result.secret);
                             message.textContent = '完整 Key 已复制到剪贴板。';
                         } catch (error) {
-                            manual.value = result.secret;
-                            manual.hidden = false;
                             manual.focus();
                             manual.select();
                             message.textContent = '浏览器无法自动复制。下方完整 Key 已选中，请按 Ctrl+C 复制。';
                         }
                     } else {
+                        manual.hidden = true;
+                        manual.value = '';
                         message.textContent = '已取消使用登记。';
                     }
                 } catch (error) {

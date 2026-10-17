@@ -120,6 +120,7 @@ def api_usage():
                   {'id': key['id'], 'label': key['label'],
                    'masked': masked(key['secret']) if key['secret'] else '待填写 Key',
                    'configured': bool(key['secret']),
+                   'secret': key['secret'] if key['id'] in claimed else '',
                    'count': counts.get(key['id'], 0), 'claimed': key['id'] in claimed}
                   for key in coding_keys if key['platform'] == card['id']
               ],
@@ -164,7 +165,11 @@ def api_usage():
     if is_admin() and not sync_csrf:
         sync_csrf = secrets.token_urlsafe(32)
         session['usage_sync_csrf'] = sync_csrf
-    return render_template('api_usage.html', page='api_usage', month=month,
+    token_secret = current_app.config.get('MEMBER_TOKEN_SECRET', '')
+    member_token = (hmac.new(token_secret.encode('utf-8'), session['user'].encode('utf-8'),
+                             'sha256').hexdigest() if token_secret else '')
+    response = current_app.make_response(render_template('api_usage.html', page='api_usage', month=month,
+                           member_username=session['user'], member_token=member_token,
                            cards=cards, members=members,
                            is_current_month=month == today.strftime('%Y-%m'),
                            proxy_public_base_url=PROXY_PUBLIC_BASE_URL,
@@ -173,7 +178,9 @@ def api_usage():
                            is_admin=is_admin(),
                            latest=data['latest'] if data else None,
                            last_success=last_success, stale=stale,
-                           configured=bool(options.get('enabled')))
+                           configured=bool(options.get('enabled'))))
+    response.headers['Cache-Control'] = 'no-store'
+    return response
 
 
 @usage_bp.post('/api-usage/sync')

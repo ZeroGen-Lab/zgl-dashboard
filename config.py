@@ -121,6 +121,9 @@ PORT = _effective['port']
 API_SECRET = _effective['api_secret']
 ALLOWED_CHECKIN_IPS = _effective['allowed_checkin_ips']
 SECRET_KEY = _effective['secret_key']
+MEMBER_TOKEN_SECRET = _effective.get('member_token_secret', '')
+if not isinstance(MEMBER_TOKEN_SECRET, str):
+    raise ValueError('member_token_secret must be a string')
 DINGTALK_WEBHOOK_URL = _effective.get('dingtalk_webhook_url', '')
 DINGTALK_SECRET = _effective.get('dingtalk_secret', '')
 DEEPSEEK_API_KEY = _effective.get('deepseek_api_key', '')
@@ -146,6 +149,7 @@ flask_config = {
     'DB_BAK_DIR': DB_BAK_DIR,
     'ALLOWED_CHECKIN_IPS': ALLOWED_CHECKIN_IPS,
     'SECRET_KEY': SECRET_KEY,
+    'MEMBER_TOKEN_SECRET': MEMBER_TOKEN_SECRET,
     'DINGTALK_WEBHOOK_URL': DINGTALK_WEBHOOK_URL,
     'DINGTALK_SECRET': DINGTALK_SECRET,
     'DEEPSEEK_API_KEY': DEEPSEEK_API_KEY,

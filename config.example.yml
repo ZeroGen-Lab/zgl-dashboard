@@ -10,6 +10,10 @@ server:
   port: 5000
   secret_key: YOUR_SECRET_KEY_HERE
   api_secret: YOUR_API_SECRET_HERE
+  # 个人令牌 = HMAC-SHA256(key=此字符串的 UTF-8 字节, msg=登录用户名的 UTF-8 字节)。
+  # 输出为 64 位小写十六进制，无 sk- 前缀；Proxy 必须使用相同秘密和用户名。
+  # 修改后所有个人令牌都会变化；正式部署请替换为随机秘密。
+  member_token_secret: zgl-api-usage
   allowed_checkin_ips:
     - YOUR_RASPBERRY_PI_IP_HERE
   dingtalk_webhook_url: https://oapi.dingtalk.com/robot/send?access_token=YOUR_ACCESS_TOKEN
