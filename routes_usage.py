@@ -13,7 +13,7 @@ from flask import Blueprint, current_app, jsonify, render_template, request, ses
 import yaml
 
 from auth import is_admin, login_required
-from config import change_claim, claim_status, masked
+from config import ClaimConflict, change_claim, claim_status, masked
 from db import get_db_connection
 from db_usage import SHANGHAI, read_dashboard, read_member_usage
 from usage_sync import SyncError, sync_usage, valid_month
@@ -32,7 +32,7 @@ PLATFORM_CARDS = (
 )
 
 
-def load_platform_info(path=INFO_PATH):
+def load_usage_content(path=INFO_PATH):
     """Read on each page request so YAML edits take effect on refresh."""
     try:
         with open(path, encoding='utf-8') as source:
@@ -40,7 +40,12 @@ def load_platform_info(path=INFO_PATH):
     except (OSError, yaml.YAMLError) as exc:
         LOG.warning('无法读取平台模型介绍：%s', exc)
         return {}
-    platforms = data.get('platforms') if isinstance(data, dict) else None
+    return data if isinstance(data, dict) else {}
+
+
+def load_platform_info(path=INFO_PATH, *, content=None):
+    data = load_usage_content(path) if content is None else content
+    platforms = data.get('platforms')
     if not isinstance(platforms, dict):
         LOG.warning('平台模型介绍缺少 platforms 映射')
         return {}
@@ -59,11 +64,18 @@ def load_platform_info(path=INFO_PATH):
             continue
         result[platform] = {'title': title, 'lines': lines, 'note': note,
                             'pricing_url': url if url.startswith(('https://', 'http://')) else ''}
+        coding_plan = info.get('coding_plan')
+        if isinstance(coding_plan, dict):
+            # Reuse description validation; only accept the documented text fields.
+            fields = {key: coding_plan[key] for key in ('title', 'lines', 'note', 'pricing_url')
+                      if key in coding_plan}
+            result[platform]['coding_plan'] = load_platform_info(
+                content={'platforms': {platform: fields}}).get(platform, {})
     return result
 
 
 def model_chart(series, dates):
-    """Prepare seven stacked daily bars, one segment per model."""
+    """Prepare stacked daily bars for the selected calendar month."""
     return {
         'labels': [date[5:] for date in reversed(dates)],
         'models': [
@@ -93,6 +105,11 @@ def load_member_names():
 def api_usage():
     today = datetime.now(SHANGHAI)
     month = request.args.get('month') or today.strftime('%Y-%m')
+    if request.args.get('year') and request.args.get('month_number'):
+        try:
+            month = f"{int(request.args['year']):04d}-{int(request.args['month_number']):02d}"
+        except ValueError:
+            month = today.strftime('%Y-%m')
     if not valid_month(month):
         month = today.strftime('%Y-%m')
     options = current_app.config.get('LLM_USAGE_SYNC') or {}
@@ -109,7 +126,11 @@ def api_usage():
         observed_platforms.add(platform)
     coding_keys = current_app.config.get('CODING_PLAN_KEYS') or []
     counts, claimed = claim_status(options.get('mirror_db_path'), session['user']) if coding_keys else ({}, set())
-    platform_info = load_platform_info()
+    usage_content = load_usage_content()
+    platform_info = load_platform_info(content=usage_content)
+    member_token_note = usage_content.get('member_token_note', '')
+    if not isinstance(member_token_note, str):
+        member_token_note = ''
     cards = [{**card, 'tokens': platform_totals[card['id']]['total'],
               'input_tokens': platform_totals[card['id']]['input'],
               'output_tokens': platform_totals[card['id']]['output'],
@@ -120,17 +141,19 @@ def api_usage():
                   {'id': key['id'], 'label': key['label'],
                    'masked': masked(key['secret']) if key['secret'] else '待填写 Key',
                    'configured': bool(key['secret']),
+                   'blocked': key['platform'] == 'zhipu' and key['id'] not in claimed and any(
+                       item['id'] in claimed for item in coding_keys if item['platform'] == 'zhipu'),
+                   'secret': key['secret'] if key['id'] in claimed else '',
                    'count': counts.get(key['id'], 0), 'claimed': key['id'] in claimed}
                   for key in coding_keys if key['platform'] == card['id']
               ],
               'has_data': card['id'] in observed_platforms}
              for card in PLATFORM_CARDS]
     year, month_number = map(int, month.split('-'))
-    chart_end = (today.date() if month == today.strftime('%Y-%m') else
-                 date(year, month_number, monthrange(year, month_number)[1]))
-    recent_dates = [(chart_end - timedelta(days=offset)).isoformat() for offset in range(7)]
+    chart_end = date(year, month_number, monthrange(year, month_number)[1])
+    chart_dates = [(chart_end - timedelta(days=offset)).isoformat() for offset in range(chart_end.day)]
     member_data = read_member_usage(options.get('mirror_db_path'), month,
-                                    max(recent_dates[-1], month + '-01'),
+                                    month + '-01',
                                     (chart_end + timedelta(days=1)).isoformat())
     platform_models = defaultdict(lambda: defaultdict(lambda: defaultdict(int)))
     member_models = defaultdict(lambda: defaultdict(lambda: defaultdict(int)))
@@ -145,9 +168,9 @@ def api_usage():
                 'total_tokens': row['total_tokens'],
                 'chart_id': f'member-{index}'}
                for index, row in enumerate(member_data['monthly'])] if member_data else []
-    model_charts = {f'platform-{card["id"]}': model_chart(platform_models[card['id']], recent_dates)
+    model_charts = {f'platform-{card["id"]}': model_chart(platform_models[card['id']], chart_dates)
                     for card in cards}
-    model_charts.update({member['chart_id']: model_chart(member_models[member['loginname']], recent_dates)
+    model_charts.update({member['chart_id']: model_chart(member_models[member['loginname']], chart_dates)
                          for member in members})
     last_success = data['last_success'] if data else None
     stale = True
@@ -164,16 +187,25 @@ def api_usage():
     if is_admin() and not sync_csrf:
         sync_csrf = secrets.token_urlsafe(32)
         session['usage_sync_csrf'] = sync_csrf
-    return render_template('api_usage.html', page='api_usage', month=month,
+    token_secret = current_app.config.get('MEMBER_TOKEN_SECRET', '')
+    member_token = (hmac.new(token_secret.encode('utf-8'), session['user'].encode('utf-8'),
+                             'sha256').hexdigest() if token_secret else '')
+    response = current_app.make_response(render_template('api_usage.html', page='api_usage', month=month,
+                           member_username=session['user'], member_token=member_token,
+                           member_token_note=member_token_note,
                            cards=cards, members=members,
+                           selected_year=year, selected_month=month_number,
+                           available_years=range(min(2000, year), max(today.year + 5, year) + 1),
                            is_current_month=month == today.strftime('%Y-%m'),
                            proxy_public_base_url=PROXY_PUBLIC_BASE_URL,
-                           recent_dates=recent_dates, model_charts=model_charts,
+                           chart_dates=chart_dates, model_charts=model_charts,
                            coding_plan_csrf=csrf, usage_sync_csrf=sync_csrf,
                            is_admin=is_admin(),
                            latest=data['latest'] if data else None,
                            last_success=last_success, stale=stale,
-                           configured=bool(options.get('enabled')))
+                           configured=bool(options.get('enabled'))))
+    response.headers['Cache-Control'] = 'no-store'
+    return response
 
 
 @usage_bp.post('/api-usage/sync')
@@ -227,8 +259,12 @@ def coding_plan_key_action(key_id, action):
             count = counts.get(key_id, 0)
             is_claimed = True
         else:
+            exclusive_ids = tuple(item['id'] for item in current_app.config.get('CODING_PLAN_KEYS', [])
+                                  if item['platform'] == 'zhipu') if key['platform'] == 'zhipu' else ()
             count, is_claimed = change_claim(path, current_app.config['DB_PATH'], key_id,
-                                             session['user'], action)
+                                             session['user'], action, exclusive_ids)
+    except ClaimConflict as exc:
+        return jsonify(error=str(exc)), 409
     except (OSError, sqlite3.Error, ValueError):
         current_app.logger.exception('Coding Plan 使用登记失败')
         return jsonify(error='暂时无法保存使用登记'), 500

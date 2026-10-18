@@ -1,13 +1,27 @@
 {% extends "base.html" %}
+{% macro tokens_m(value) %}{{ '%.2f' | format(value / 1000000) }} M{% endmacro %}
 {% block extra_style %}
 <style>
     .usage-platform-card { border-top: 3px solid #85b4e8; }
     .usage-platform-card .usage-chart-panel summary .fw-bold { color: #2867aa; }
     .usage-platform-card .usage-chart-chevron { color: #5c94d1; }
     .usage-platform-card .usage-token-total { color: #285f9d; }
+    .usage-section-title { color: #2867aa; font-size: .95rem; font-weight: 700; }
+    .usage-description-line { min-height: 1.5em; }
+    .usage-section-divider { height: 0; border: 0; border-top: 1px solid #e3e9ef; background: none; opacity: 1; }
+    .usage-month-picker { position: relative; }
+    .usage-month-picker > summary { list-style: none; cursor: pointer; min-width: 150px; }
+    .usage-month-picker > summary::-webkit-details-marker { display: none; }
+    .usage-month-popover { position: absolute; right: 0; top: calc(100% + 8px); z-index: 1050; width: 276px; padding: 16px; background: #fff; border: 1px solid #dce6ef; border-radius: 12px; box-shadow: 0 8px 28px rgba(40, 70, 100, .15); }
+    .usage-year-input { width: 90px; border: 0; text-align: center; font-weight: 600; color: #285f9d; background: #f5f8fb; border-radius: 6px; padding: 5px; }
+    .usage-month-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 14px; }
+    .usage-month-option { border: 0; border-radius: 8px; background: #f5f8fb; color: #43566b; padding: 10px 0; }
+    .usage-month-option:hover { background: #e4effb; }
+    .usage-month-option[aria-pressed="true"] { color: #fff; background: #2867aa; font-weight: 600; }
     .usage-chart-panel summary { list-style: none; cursor: pointer; }
     .usage-chart-panel summary::-webkit-details-marker { display: none; }
-    .usage-chart-panel[open] .usage-chart-chevron { transform: rotate(180deg); }
+    .usage-chart-chevron { display: inline-block; transform: rotate(0deg); }
+    .usage-chart-panel[open] > summary .usage-chart-chevron { transform: rotate(180deg); }
     .usage-chart { position: relative; height: 230px; }
     .usage-base-url { overflow-wrap: anywhere; }
     .usage-example { background: #f5f8fb; border: 1px solid #dce6ef; border-radius: .5rem; overflow-x: auto; }
@@ -16,6 +30,7 @@
 </style>
 {% endblock %}
 {% block content %}
+
 <div class="card p-4 mb-4">
     <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-3">
         <div>
@@ -27,8 +42,25 @@
         <button id="usage-sync-button" class="btn btn-outline-primary text-nowrap" type="button" {% if not configured %}disabled{% endif %}>更新</button>
         {% endif %}
         <form method="get" class="d-flex align-items-center gap-2">
-            <label for="month" class="text-muted text-nowrap">月份</label>
-            <input id="month" name="month" type="month" class="form-control" value="{{ month }}">
+            <input id="usage-month-value" type="hidden" name="month" value="{{ month }}">
+            <details class="usage-month-picker" id="usage-month-picker">
+                <summary class="btn btn-outline-secondary d-flex align-items-center justify-content-between gap-3" aria-label="选择年份和月份">
+                    <span><i class="bi bi-calendar3 me-2" aria-hidden="true"></i><span id="usage-month-label">{{ selected_year }}年{{ '%02d' | format(selected_month) }}月</span></span>
+                    <i class="bi bi-chevron-down small" aria-hidden="true"></i>
+                </summary>
+                <div class="usage-month-popover">
+                    <div class="d-flex align-items-center justify-content-between">
+                        <button type="button" class="btn btn-sm btn-light" data-year-step="-1" aria-label="上一年">‹</button>
+                        <label class="d-flex align-items-center gap-1"><input id="usage-picker-year" class="usage-year-input" type="number" min="1" max="9999" value="{{ selected_year }}" aria-label="年份">年</label>
+                        <button type="button" class="btn btn-sm btn-light" data-year-step="1" aria-label="下一年">›</button>
+                    </div>
+                    <div class="usage-month-grid">
+                        {% for number in range(1, 13) %}
+                        <button type="button" class="usage-month-option" data-month="{{ number }}" aria-pressed="{{ 'true' if number == selected_month else 'false' }}">{{ number }}月</button>
+                        {% endfor %}
+                    </div>
+                </div>
+            </details>
             <button class="btn btn-dark text-nowrap" type="submit">查看</button>
         </form>
         </div>
@@ -48,6 +80,21 @@
     {% endif %}
 </div>
 
+<section class="card p-4 mb-4" aria-labelledby="member-token-title">
+    <h5 id="member-token-title" class="mb-2">我的 API 令牌</h5>
+    <p class="small text-muted mb-2">调用时将下方完整令牌填入 API Key，无需添加姓名或 sk- 前缀。<strong>请勿分享给他人。</strong></p>
+    {% if member_token %}
+    <div class="d-flex flex-wrap align-items-center gap-2">
+        <input id="member-api-token" class="form-control font-monospace flex-grow-1" style="min-width: 0; flex-basis: 28rem;" type="text" value="{{ member_token }}" aria-label="我的完整 API 令牌" autocomplete="off" spellcheck="false" readonly>
+        <button id="member-token-copy" class="btn btn-outline-primary text-nowrap" type="button"> 全选 </button>
+    </div>
+    <div id="member-token-message" class="small mt-2" role="status" aria-live="polite"></div>
+    {% if member_token_note %}<p class="small text-muted mb-0 mt-2">{{ member_token_note }}</p>{% endif %}
+    {% else %}
+    <p class="text-muted mb-0">个人令牌尚未配置，请联系管理员。</p>
+    {% endif %}
+</section>
+
 <section class="mb-4">
     <h5 class="mb-3">{{ month }} 平台月度用量</h5>
     <div class="row g-3">
@@ -60,20 +107,20 @@
                         {% if card.id == 'kimi' and not card.has_data %}<span class="badge bg-secondary">待接入</span>{% endif %}
                     </summary>
                     <div class="border-top mt-3 pt-3">
-                        <div class="usage-member-chart-title mb-1"><i>近 7 天模型使用状况</i></div>
-                        <div class="text-muted small mb-2"><i>{{ recent_dates[-1] }} 至 {{ recent_dates[0] }} · 每日 Token</i></div>
-                        <div class="usage-chart"><canvas role="img" aria-label="{{ card.name }}近七天各模型每日 Token 柱状图"></canvas></div>
-                        <p class="text-muted small mb-0" data-chart-empty hidden>近 7 天暂无调用记录。</p>
+                        <div class="usage-member-chart-title mb-1"><i>模型使用状况</i></div>
+                        <div class="text-muted small mb-2"><i>{{ chart_dates[-1] }} 至 {{ chart_dates[0] }} · 每日 Token</i></div>
+                        <div class="usage-chart"><canvas role="img" aria-label="{{ card.name }}所选自然月各模型每日 Token 柱状图"></canvas></div>
+                        <p class="text-muted small mb-0" data-chart-empty hidden>所选自然月暂无调用记录。</p>
                     </div>
                 </details>
                 <div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mt-3">
                     <div>
-                        <div class="text-muted small">本月消耗 Token</div>
-                        <div class="fs-3 fw-bold usage-token-total">{{ '{:,}'.format(card.tokens) }}</div>
+                        <div class="text-muted small">{{ '本月' if is_current_month else month + ' ' }}消耗 Token</div>
+                        <div class="fs-3 fw-bold usage-token-total">{{ tokens_m(card.tokens) }}</div>
                     </div>
                     <div class="text-muted small text-end text-nowrap ms-auto">
-                        <div>input：{{ '{:,}'.format(card.input_tokens) }}</div>
-                        <div>output：{{ '{:,}'.format(card.output_tokens) }}</div>
+                        <div>input：{{ tokens_m(card.input_tokens) }}</div>
+                        <div>output：{{ tokens_m(card.output_tokens) }}</div>
                     </div>
                 </div>
                 <div class="small mt-2 mb-2 usage-base-url">
@@ -81,23 +128,34 @@
                     {% if card.base_url %}<code>{{ card.base_url }}</code>{% else %}<span class="text-muted">暂无（待接入）</span>{% endif %}
                 </div>
                 <div class="border-top mt-2 pt-2 small flex-grow-1">
+                    <div class="usage-section-title mb-2">参考价格</div>
                     {% if card.info %}
-                    {% if card.info.title %}<div class="fw-semibold">{{ card.info.title }}</div>{% endif %}
-                    {% for line in card.info.lines %}<div>{{ line }}</div>{% endfor %}
+                    {% if card.info.title %}<div class="fw-semibold"><strong>{{ card.info.title }}</strong></div>{% endif %}
+                    {% for line in card.info.lines %}<div class="usage-description-line">{{ line }}</div>{% endfor %}
                     {% if card.info.note %}<div class="text-muted mt-1">{{ card.info.note }}</div>{% endif %}
                     {% else %}
                     <div class="text-muted">暂无模型介绍。</div>
                     {% endif %}
-                </div>
                 {% if card.info.pricing_url %}
-                <a class="small mt-2" href="{{ card.info.pricing_url }}" target="_blank" rel="noopener noreferrer">查看官方计费规则 <i class="bi bi-box-arrow-up-right"></i></a>
+                <a class="d-inline-block mt-2" href="{{ card.info.pricing_url }}" target="_blank" rel="noopener noreferrer">查看官方计费规则 <i class="bi bi-box-arrow-up-right"></i></a>
                 {% endif %}
                 {% if card.id in ('deepseek', 'zhipu') %}
+                    <hr class="usage-section-divider my-3">
+                    <div class="usage-section-title mb-2">Coding Plan 说明</div>
+                    {% set plan = card.info.coding_plan %}
+                    {% if plan %}
+                    {% if plan.title %}<div class="fw-semibold"><strong>{{ plan.title }}</strong></div>{% endif %}
+                    {% for line in plan.lines %}<div class="usage-description-line">{{ line }}</div>{% endfor %}
+                    {% if plan.note %}<div class="text-muted mt-1">{{ plan.note }}</div>{% endif %}
+                    {% if plan.pricing_url %}<a class="d-inline-block mt-2" href="{{ plan.pricing_url }}" target="_blank" rel="noopener noreferrer">查看 Coding Plan 官方说明 <i class="bi bi-box-arrow-up-right"></i></a>{% endif %}
+                    {% endif %}
+                {% endif %}
+                </div>
+                {% if card.id in ('deepseek', 'zhipu') %}
                 <div class="border-top mt-3 pt-3">
-                    <div class="fw-semibold small mb-1">Coding Plan Key</div>
-                    <div class="text-muted small mb-2">按照官方文档接入，不接受转发。领取key后计入使用人数；不再使用时可以取消登记。</div>
+                    <div class="usage-section-title mb-2">Coding Plan Key</div>
                     {% for key in card.coding_keys %}
-                    <div class="coding-plan-key py-2 border-bottom" data-key-id="{{ key.id }}">
+                    <div class="coding-plan-key py-2 border-bottom" data-key-id="{{ key.id }}" data-key-platform="{{ card.id }}" data-key-claimed="{{ 'true' if key.claimed else 'false' }}">
                         <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
                             <div class="small">
                                 <span class="fw-semibold">{{ key.label }}</span>
@@ -106,14 +164,14 @@
                             </div>
                             <div class="d-flex flex-wrap gap-2 ms-auto">
                                 {% if key.configured %}
-                                <button type="button" class="btn btn-sm btn-outline-primary" data-key-action="claim" {% if key.claimed %}hidden{% endif %}>＋ 使用并复制</button>
-                                <button type="button" class="btn btn-sm btn-outline-primary" data-key-action="reveal" {% if not key.claimed %}hidden{% endif %}>复制完整 Key</button>
+                                <button type="button" class="btn btn-sm btn-outline-primary" data-key-action="claim" {% if key.claimed %}hidden{% endif %} {% if key.blocked %}disabled title="请先停止使用已登记的智谱 Key"{% endif %}>＋ 登记使用</button>
+                                <button type="button" class="btn btn-sm btn-outline-primary" data-key-action="reveal" {% if not key.claimed %}hidden{% endif %}> 全选 </button>
                                 <button type="button" class="btn btn-sm btn-outline-secondary" data-key-action="release" {% if not key.claimed %}hidden{% endif %}>停止使用</button>
                                 {% else %}<span class="text-muted small">填写完整 Key 后可领取</span>{% endif %}
                             </div>
                         </div>
                         <div class="small" data-key-message aria-live="polite"></div>
-                        <input class="form-control form-control-sm mt-2" type="password" data-key-manual-copy aria-label="手动复制完整 Key" autocomplete="off" readonly hidden>
+                        <input class="form-control form-control-sm mt-2 font-monospace" type="text" data-key-manual-copy aria-label="完整 Key（可选中复制）" autocomplete="off" spellcheck="false" readonly value="{{ key.secret }}" {% if not key.claimed or not key.secret %}hidden{% endif %}>
                     </div>
                     {% else %}
                     <div class="text-muted small">尚未配置可领取的 Coding Plan Key。</div>
@@ -124,12 +182,12 @@
         </div>
         {% endfor %}
     </div>
-    <p class="text-muted small mb-0 mt-3">Token 数按 total_tokens 汇总；实际费用与 Coding Plan 积分以各平台账单为准。</p>
+    <p class="text-muted small mb-0 mt-3">所有用量以 M（百万 Token）展示，保留两位小数；1 M = 1,000,000 Token。Token 数按 total_tokens 汇总；实际费用与 Coding Plan 积分以各平台账单为准。</p>
 </section>
 
 <div class="card p-4 mb-4">
     <h5 class="mb-2">各成员模型用量</h5>
-    <p class="text-muted small mb-3">{{ month }} 月度总量按成员汇总；点击成员姓名查看近 7 天各模型的每日用量。</p>
+    <p class="text-muted small mb-3">{{ month }} 月度总量按成员汇总；点击成员姓名查看所选自然月各模型的每日用量。</p>
     {% if members %}
     {% for member in members %}
     <details class="usage-chart-panel border rounded mb-2" data-chart-id="{{ member.chart_id }}">
@@ -137,14 +195,14 @@
             <span class="fw-semibold">{{ member.name }} <i class="bi bi-chevron-down usage-chart-chevron small"></i></span>
             <span class="d-flex flex-wrap align-items-baseline gap-2 ms-auto">
                 <span class="text-muted small">{{ '本月' if is_current_month else month }}消耗</span>
-                <span class="fw-bold">{{ '{:,}'.format(member.total_tokens) }} <span class="text-muted fw-normal small">Token</span></span>
+                <span class="fw-bold">{{ tokens_m(member.total_tokens) }} <span class="text-muted fw-normal small">Token</span></span>
             </span>
         </summary>
         <div class="border-top px-3 py-3">
-            <div class="usage-member-chart-title mb-1"><i>近 7 天模型使用状况</i></div>
-            <div class="text-muted small mb-2"><i>{{ recent_dates[-1] }} 至 {{ recent_dates[0] }} · 每日 Token</i></div>
-            <div class="usage-chart"><canvas role="img" aria-label="{{ member.name }}近七天各模型每日 Token 柱状图"></canvas></div>
-            <p class="text-muted small mb-0" data-chart-empty hidden>近 7 天暂无调用记录。</p>
+            <div class="usage-member-chart-title mb-1"><i>模型使用状况</i></div>
+            <div class="text-muted small mb-2"><i>{{ chart_dates[-1] }} 至 {{ chart_dates[0] }} · 每日 Token</i></div>
+            <div class="usage-chart"><canvas role="img" aria-label="{{ member.name }}所选自然月各模型每日 Token 柱状图"></canvas></div>
+            <p class="text-muted small mb-0" data-chart-empty hidden>所选自然月暂无调用记录。</p>
         </div>
     </details>
     {% endfor %}
@@ -154,7 +212,7 @@
 </div>
 <section class="card p-4 mb-4" aria-labelledby="usage-guide-title">
     <h5 id="usage-guide-title" class="mb-2">如何调用</h5>
-    <p class="small mb-2">每位成员使用自己的 Proxy Token，例如 <code><b>sk-zhangsan</b></code>（姓名部分全小写、无空格）。百炼真实 Key 由 Proxy 统一保管，所有成员通过自己的 <code>sk-name</code> 调用，无需申请或配置个人百炼 Key。安装 Python SDK：<code>pip install openai</code>。</p>
+    <p class="small mb-2">每位成员使用页面顶部的个人 API 令牌（需 Proxy 启用新令牌认证），将其保存到环境变量 <code>ZGL_MEMBER_TOKEN</code>。百炼真实 Key 由 Proxy 统一保管，无需申请或配置个人百炼 Key。安装 Python SDK：<code>pip install openai</code>。</p>
     <p class="small mb-2">将自己的 Token 放入环境变量 <code>ZGL_MEMBER_TOKEN</code> 后，以 DeepSeek 为例：</p>
     <pre class="usage-example p-3 mb-2"><code>import os
 from openai import OpenAI
@@ -179,7 +237,62 @@ print(response.choices[0].message.content)</code></pre>
 </section>
 <script>
 (function () {
+    const picker = document.getElementById('usage-month-picker');
+    const year = document.getElementById('usage-picker-year');
+    const value = document.getElementById('usage-month-value');
+    const label = document.getElementById('usage-month-label');
+    const months = [...picker.querySelectorAll('[data-month]')];
+    function refresh() {
+        months.forEach(button => button.setAttribute('aria-pressed', String(
+            value.value === `${String(year.value).padStart(4, '0')}-${button.dataset.month.padStart(2, '0')}`)));
+    }
+    picker.querySelectorAll('[data-year-step]').forEach(button => {
+        button.addEventListener('click', () => {
+            const current = Number(year.value);
+            year.value = Math.max(1, Math.min(9999, (current || Number(value.value.slice(0, 4))) + Number(button.dataset.yearStep)));
+            refresh();
+        });
+    });
+    year.addEventListener('input', refresh);
+    months.forEach(button => button.addEventListener('click', () => {
+        if (!year.reportValidity() || !year.value) return;
+        const month = button.dataset.month.padStart(2, '0');
+        value.value = `${String(year.value).padStart(4, '0')}-${month}`;
+        label.textContent = `${Number(year.value)}年${month}月`;
+        refresh();
+        picker.open = false;
+        picker.querySelector('summary').focus();
+    }));
+    document.addEventListener('click', event => {
+        if (!picker.contains(event.target)) picker.open = false;
+    });
+    picker.addEventListener('keydown', event => {
+        if (event.key === 'Escape') {
+            picker.open = false;
+            picker.querySelector('summary').focus();
+        }
+    });
+})();
+</script>
+<script>
+(function () {
+    const input = document.getElementById('member-api-token');
+    const button = document.getElementById('member-token-copy');
+    if (!input || !button) return;
+    const message = document.getElementById('member-token-message');
+    input.addEventListener('click', () => input.select());
+    button.addEventListener('click', () => {
+        input.focus();
+        input.select();
+        input.setSelectionRange(0, input.value.length);
+        message.textContent = '令牌已全选，请按 Ctrl+C（⌘C）复制。';
+    });
+})();
+</script>
+<script>
+(function () {
     const charts = {{ model_charts | tojson }};
+    const formatTokens = value => `${(Number(value) / 1000000).toFixed(2)} M`;
     const names = [...new Set(Object.values(charts).flatMap(chart => chart.models.map(model => model.name)))].sort();
     const palette = ['#a9cdec', '#b9ddce', '#e8c8dc', '#f2d8b4', '#cbcdef', '#b7dfe8', '#dfd2ee', '#d5e4b9'];
     const colors = Object.fromEntries(names.map((name, index) =>
@@ -191,7 +304,7 @@ print(response.choices[0].message.content)</code></pre>
             const data = charts[panel.dataset.chartId];
             const empty = panel.querySelector('[data-chart-empty]');
             if (!data || !data.models.length || !window.Chart) {
-                empty.textContent = !window.Chart ? '图表暂时无法加载，请稍后刷新页面。' : '近 7 天暂无调用记录。';
+                empty.textContent = !window.Chart ? '图表暂时无法加载，请稍后刷新页面。' : '所选自然月暂无调用记录。';
                 empty.hidden = false;
                 panel.querySelector('.usage-chart').hidden = true;
                 return;
@@ -211,10 +324,20 @@ print(response.choices[0].message.content)</code></pre>
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
-                    plugins: { legend: { position: 'bottom' } },
+                    plugins: {
+                        legend: { position: 'bottom' },
+                        tooltip: { callbacks: {
+                            label: context => `${context.dataset.label}: ${formatTokens(context.parsed.y)} Token`
+                        } }
+                    },
                     scales: {
-                        x: { stacked: true, grid: { display: false } },
-                        y: { stacked: true, beginAtZero: true, ticks: { precision: 0 } }
+                        x: { stacked: true, grid: { display: false }, ticks: { autoSkip: true, maxTicksLimit: 16, maxRotation: 45 } },
+                        y: {
+                            stacked: true,
+                            beginAtZero: true,
+                            title: { display: true, text: '用量（M Token）' },
+                            ticks: { callback: value => formatTokens(value) }
+                        }
                     }
                 }
             });
@@ -255,17 +378,29 @@ print(response.choices[0].message.content)</code></pre>
 <script>
 (function () {
     const csrf = {{ coding_plan_csrf | tojson }};
+    const rows = [...document.querySelectorAll('.coding-plan-key')];
+    function updateButtons() {
+        const zhipuClaimed = rows.some(row => row.dataset.keyPlatform === 'zhipu' && row.dataset.keyClaimed === 'true');
+        const zhipuBusy = rows.some(row => row.dataset.keyPlatform === 'zhipu' && row.dataset.busy === 'true');
+        rows.forEach(row => {
+            const blocked = row.dataset.keyPlatform === 'zhipu' && zhipuClaimed && row.dataset.keyClaimed !== 'true';
+            row.querySelectorAll('[data-key-action]').forEach(button => {
+                button.disabled = row.dataset.busy === 'true' || blocked || (row.dataset.keyPlatform === 'zhipu' && zhipuBusy);
+                button.title = blocked ? '请先停止使用已登记的智谱 Key' : '';
+            });
+        });
+    }
+    updateButtons();
     document.querySelectorAll('.coding-plan-key').forEach(row => {
+        const manual = row.querySelector('[data-key-manual-copy]');
+        manual.addEventListener('click', () => manual.select());
         row.querySelectorAll('[data-key-action]').forEach(button => {
             button.addEventListener('click', async () => {
                 const action = button.dataset.keyAction;
                 const message = row.querySelector('[data-key-message]');
-                const manual = row.querySelector('[data-key-manual-copy]');
-                const buttons = row.querySelectorAll('[data-key-action]');
-                buttons.forEach(item => item.disabled = true);
+                row.dataset.busy = 'true';
+                updateButtons();
                 message.textContent = '';
-                manual.hidden = true;
-                manual.value = '';
                 try {
                     const response = await fetch(`/api-usage/coding-keys/${encodeURIComponent(row.dataset.keyId)}/${action}`, {
                         method: 'POST',
@@ -275,29 +410,28 @@ print(response.choices[0].message.content)</code></pre>
                     });
                     const result = await response.json();
                     if (!response.ok) throw new Error(result.error || '操作失败，请重试');
+                    row.dataset.keyClaimed = String(result.claimed);
                     row.querySelector('[data-key-count]').textContent = `${result.count} 人使用`;
                     row.querySelector('[data-key-action="claim"]').hidden = result.claimed;
                     row.querySelector('[data-key-action="reveal"]').hidden = !result.claimed;
                     row.querySelector('[data-key-action="release"]').hidden = !result.claimed;
                     if (result.secret) {
-                        try {
-                            if (!navigator.clipboard || !window.isSecureContext) throw new Error('clipboard unavailable');
-                            await navigator.clipboard.writeText(result.secret);
-                            message.textContent = '完整 Key 已复制到剪贴板。';
-                        } catch (error) {
-                            manual.value = result.secret;
-                            manual.hidden = false;
-                            manual.focus();
-                            manual.select();
-                            message.textContent = '浏览器无法自动复制。下方完整 Key 已选中，请按 Ctrl+C 复制。';
-                        }
+                        manual.value = result.secret;
+                        manual.hidden = false;
+                        manual.focus();
+                        manual.select();
+                        manual.setSelectionRange(0, manual.value.length);
+                        message.textContent = '完整 Key 已全选，请按 Ctrl+C（⌘C）复制。';
                     } else {
+                        manual.hidden = true;
+                        manual.value = '';
                         message.textContent = '已取消使用登记。';
                     }
                 } catch (error) {
                     message.textContent = error.message;
                 } finally {
-                    buttons.forEach(item => item.disabled = false);
+                    row.dataset.busy = 'false';
+                    updateButtons();
                 }
             });
         });
