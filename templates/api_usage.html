@@ -23,6 +23,8 @@
     .usage-chart-chevron { display: inline-block; transform: rotate(0deg); }
     .usage-chart-panel[open] > summary .usage-chart-chevron { transform: rotate(180deg); }
     .usage-chart { position: relative; height: 230px; }
+    #member-token-title { font-size: 1.05rem; font-weight: 600; white-space: nowrap; }
+    #member-token-copy { width: 7rem; flex-shrink: 0; }
     .usage-base-url { overflow-wrap: anywhere; }
     .usage-example { background: #f5f8fb; border: 1px solid #dce6ef; border-radius: .5rem; overflow-x: auto; }
     .usage-member-chart-title { font-family: "Noto Serif SC", "Songti SC", "SimSun", Georgia, serif; font-size: 1.05rem; font-weight: 600; letter-spacing: .03em; color: #587b98; }
@@ -81,12 +83,16 @@
 </div>
 
 <section class="card p-4 mb-4" aria-labelledby="member-token-title">
-    <h5 id="member-token-title" class="mb-2">我的 API 令牌</h5>
-    <p class="small text-muted mb-2">调用时将下方完整令牌填入 API Key，无需添加姓名或 sk- 前缀。<strong>请勿分享给他人。</strong></p>
+    <div class="d-flex flex-nowrap align-items-center gap-2 mb-2">
+        <h5 id="member-token-title" class="mb-0">我的API令牌</h5>
+        {% if member_token %}
+        <button id="member-token-copy" class="btn btn-sm btn-outline-primary text-nowrap" type="button" aria-controls="member-api-token" aria-expanded="false">显示并全选</button>
+        {% endif %}
+    </div>
+    <!-- <p class="small text-muted mb-2">调用时将下方完整令牌填入 API Key，无需添加姓名或 sk- 前缀。<strong>请勿分享给他人。</strong></p> -->
     {% if member_token %}
     <div class="d-flex flex-wrap align-items-center gap-2">
-        <input id="member-api-token" class="form-control font-monospace flex-grow-1" style="min-width: 0; flex-basis: 28rem;" type="text" value="{{ member_token }}" aria-label="我的完整 API 令牌" autocomplete="off" spellcheck="false" readonly>
-        <button id="member-token-copy" class="btn btn-outline-primary text-nowrap" type="button"> 全选 </button>
+        <input id="member-api-token" class="form-control font-monospace flex-grow-1" style="min-width: 0; flex-basis: 28rem;" type="text" value="" aria-label="我的完整 API 令牌" autocomplete="off" spellcheck="false" readonly hidden>
     </div>
     <div id="member-token-message" class="small mt-2" role="status" aria-live="polite"></div>
     {% if member_token_note %}<p class="small text-muted mb-0 mt-2">{{ member_token_note }}</p>{% endif %}
@@ -165,13 +171,13 @@
                             <div class="d-flex flex-wrap gap-2 ms-auto">
                                 {% if key.configured %}
                                 <button type="button" class="btn btn-sm btn-outline-primary" data-key-action="claim" {% if key.claimed %}hidden{% endif %} {% if key.blocked %}disabled title="请先停止使用已登记的智谱 Key"{% endif %}>＋ 登记使用</button>
-                                <button type="button" class="btn btn-sm btn-outline-primary" data-key-action="reveal" {% if not key.claimed %}hidden{% endif %}> 全选 </button>
+                                <button type="button" class="btn btn-sm btn-outline-primary" data-key-action="reveal" aria-expanded="false" {% if not key.claimed %}hidden{% endif %}>显示并全选</button>
                                 <button type="button" class="btn btn-sm btn-outline-secondary" data-key-action="release" {% if not key.claimed %}hidden{% endif %}>停止使用</button>
                                 {% else %}<span class="text-muted small">填写完整 Key 后可领取</span>{% endif %}
                             </div>
                         </div>
                         <div class="small" data-key-message aria-live="polite"></div>
-                        <input class="form-control form-control-sm mt-2 font-monospace" type="text" data-key-manual-copy aria-label="完整 Key（可选中复制）" autocomplete="off" spellcheck="false" readonly value="{{ key.secret }}" {% if not key.claimed or not key.secret %}hidden{% endif %}>
+                        <input class="form-control form-control-sm mt-2 font-monospace" type="text" data-key-manual-copy aria-label="完整 Key（可选中复制）" autocomplete="off" spellcheck="false" readonly value="" hidden>
                     </div>
                     {% else %}
                     <div class="text-muted small">尚未配置可领取的 Coding Plan Key。</div>
@@ -280,12 +286,34 @@ print(response.choices[0].message.content)</code></pre>
     const button = document.getElementById('member-token-copy');
     if (!input || !button) return;
     const message = document.getElementById('member-token-message');
+    let hideTimer;
+    function hideToken() {
+        clearTimeout(hideTimer);
+        input.hidden = true;
+        input.value = '';
+        button.setAttribute('aria-expanded', 'false');
+        button.textContent = '显示并全选';
+        message.textContent = '';
+    }
+    document.addEventListener('visibilitychange', () => { if (document.hidden) hideToken(); });
+    window.addEventListener('pagehide', hideToken);
     input.addEventListener('click', () => input.select());
     button.addEventListener('click', () => {
+        clearTimeout(hideTimer);
+        if (document.hidden) return;
+        if (!input.hidden) {
+            hideToken();
+            return;
+        }
+        input.value = {{ member_token | tojson }};
+        input.hidden = false;
+        button.setAttribute('aria-expanded', 'true');
+        button.textContent = '收起';
         input.focus();
         input.select();
         input.setSelectionRange(0, input.value.length);
-        message.textContent = '令牌已全选，请按 Ctrl+C（⌘C）复制。';
+        message.textContent = '令牌已全选，请按 Ctrl+C（⌘C）复制，5 秒后自动隐藏。';
+        hideTimer = setTimeout(hideToken, 5000);
     });
 })();
 </script>
@@ -393,6 +421,16 @@ print(response.choices[0].message.content)</code></pre>
     updateButtons();
     document.querySelectorAll('.coding-plan-key').forEach(row => {
         const manual = row.querySelector('[data-key-manual-copy]');
+        let hideTimer;
+        function hideKey() {
+            clearTimeout(hideTimer);
+            manual.hidden = true;
+            manual.value = '';
+            row.querySelector('[data-key-action="reveal"]')?.setAttribute('aria-expanded', 'false');
+            row.querySelector('[data-key-message]').textContent = '';
+        }
+        document.addEventListener('visibilitychange', () => { if (document.hidden) hideKey(); });
+        window.addEventListener('pagehide', hideKey);
         manual.addEventListener('click', () => manual.select());
         row.querySelectorAll('[data-key-action]').forEach(button => {
             button.addEventListener('click', async () => {
@@ -415,17 +453,19 @@ print(response.choices[0].message.content)</code></pre>
                     row.querySelector('[data-key-action="claim"]').hidden = result.claimed;
                     row.querySelector('[data-key-action="reveal"]').hidden = !result.claimed;
                     row.querySelector('[data-key-action="release"]').hidden = !result.claimed;
-                    if (result.secret) {
+                    if (result.secret && !document.hidden) {
+                        clearTimeout(hideTimer);
                         manual.value = result.secret;
                         manual.hidden = false;
+                        row.querySelector('[data-key-action="reveal"]').setAttribute('aria-expanded', 'true');
                         manual.focus();
                         manual.select();
                         manual.setSelectionRange(0, manual.value.length);
-                        message.textContent = '完整 Key 已全选，请按 Ctrl+C（⌘C）复制。';
+                        message.textContent = '完整 Key 已全选，请按 Ctrl+C（⌘C）复制，5 秒后自动隐藏。';
+                        hideTimer = setTimeout(hideKey, 5000);
                     } else {
-                        manual.hidden = true;
-                        manual.value = '';
-                        message.textContent = '已取消使用登记。';
+                        hideKey();
+                        message.textContent = result.claimed ? '' : '已取消使用登记。';
                     }
                 } catch (error) {
                     message.textContent = error.message;

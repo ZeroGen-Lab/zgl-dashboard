@@ -2,7 +2,7 @@
 # 每个平台可编辑 title、lines、note 和 pricing_url；lines 按顺序显示。
 # 平台顶层字段为参考价格说明；deepseek/zhipu 的 coding_plan 下同名字段为 Coding Plan 说明。
 # 个人令牌提示；设为 '' 可隐藏，修改后刷新即可生效。
-member_token_note: ''
+member_token_note: '调用时将上方完整令牌填入 API Key，请勿分享给他人。'
 
 platforms:
   bailian:
