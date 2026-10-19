@@ -184,6 +184,7 @@
                                 {% else %}<span class="text-muted small">填写完整 Key 后可领取</span>{% endif %}
                             </div>
                         </div>
+                        <div class="text-muted small mt-1" data-key-users>已登记使用：{{ key.users | join('、') if key.users else '暂无' }}</div>
                         <div class="small" data-key-message aria-live="polite"></div>
                         <input class="form-control form-control-sm mt-2 font-monospace" type="text" data-key-manual-copy aria-label="完整 Key（可选中复制）" autocomplete="off" spellcheck="false" readonly value="" hidden>
                     </div>
@@ -505,6 +506,7 @@ print(response.choices[0].message.content)</code></pre>
                     if (!response.ok) throw new Error(result.error || '操作失败，请重试');
                     row.dataset.keyClaimed = String(result.claimed);
                     row.querySelector('[data-key-count]').textContent = `${result.count} 人使用`;
+                    row.querySelector('[data-key-users]').textContent = `已登记使用：${result.users.length ? result.users.join('、') : '暂无'}`;
                     row.querySelector('[data-key-action="claim"]').hidden = result.claimed;
                     row.querySelector('[data-key-action="reveal"]').hidden = !result.claimed;
                     row.querySelector('[data-key-action="release"]').hidden = !result.claimed;
