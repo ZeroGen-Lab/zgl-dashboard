@@ -102,7 +102,15 @@
 </section>
 
 <section class="mb-4">
-    <h5 class="mb-3">{{ month }} 平台月度用量</h5>
+    <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2">
+        <h5 class="mb-0">{{ month }} 平台月度用量</h5>
+        <div class="btn-group btn-group-sm" role="group" aria-label="平台用量图表刻度">
+            <button type="button" class="btn btn-outline-primary" data-platform-scale="relative" aria-pressed="false">相对用量</button>
+            <button type="button" class="btn btn-outline-primary active" data-platform-scale="absolute" aria-pressed="true">绝对用量</button>
+        </div>
+    </div>
+    <p class="text-muted small mb-2">所有用量以 M（百万 Token）展示，保留两位小数；1 M = 1,000,000 Token。Token 数按 total_tokens 汇总；实际费用与 Coding Plan 积分以各平台账单为准。</p>
+    <p id="platform-scale-description" class="text-muted small mb-3" role="status">绝对用量：本月所有平台共用纵轴刻度，便于比较实际用量。</p>
     <div class="row g-3">
         {% for card in cards %}
         <div class="col-12 col-lg-6">
@@ -188,12 +196,23 @@
         </div>
         {% endfor %}
     </div>
-    <p class="text-muted small mb-0 mt-3">所有用量以 M（百万 Token）展示，保留两位小数；1 M = 1,000,000 Token。Token 数按 total_tokens 汇总；实际费用与 Coding Plan 积分以各平台账单为准。</p>
 </section>
 
-<div class="card p-4 mb-4">
-    <h5 class="mb-2">各成员模型用量</h5>
-    <p class="text-muted small mb-3">{{ month }} 月度总量按成员汇总；点击成员姓名查看所选自然月各模型的每日用量。</p>
+<section class="mb-4">
+    <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2">
+        <h5 class="mb-0">各成员模型用量</h5>
+        {% if members %}
+        <div class="btn-group btn-group-sm" role="group" aria-label="成员用量图表刻度">
+            <button type="button" class="btn btn-outline-primary" data-member-scale="relative" aria-pressed="false">相对用量</button>
+            <button type="button" class="btn btn-outline-primary active" data-member-scale="absolute" aria-pressed="true">绝对用量</button>
+        </div>
+        {% endif %}
+    </div>
+    <p class="text-muted small mb-2">{{ month }} 月度总量按成员汇总；点击成员姓名查看所选自然月各模型的每日用量。</p>
+    {% if members %}
+    <p id="member-scale-description" class="text-muted small mb-3" role="status">绝对用量：本月所有成员共用纵轴刻度，便于比较实际用量。</p>
+    {% endif %}
+    <div class="card p-4">
     {% if members %}
     {% for member in members %}
     <details class="usage-chart-panel border rounded mb-2" data-chart-id="{{ member.chart_id }}">
@@ -215,7 +234,8 @@
     {% else %}
     <p class="text-muted mb-0">本月暂无成员模型用量记录。</p>
     {% endif %}
-</div>
+    </div>
+</section>
 <section class="card p-4 mb-4" aria-labelledby="usage-guide-title">
     <h5 id="usage-guide-title" class="mb-2">如何调用</h5>
     <p class="small mb-2">每位成员使用页面顶部的个人 API 令牌（需 Proxy 启用新令牌认证），将其保存到环境变量 <code>ZGL_MEMBER_TOKEN</code>。百炼真实 Key 由 Proxy 统一保管，无需申请或配置个人百炼 Key。安装 Python SDK：<code>pip install openai</code>。</p>
@@ -325,6 +345,38 @@ print(response.choices[0].message.content)</code></pre>
     const palette = ['#a9cdec', '#b9ddce', '#e8c8dc', '#f2d8b4', '#cbcdef', '#b7dfe8', '#dfd2ee', '#d5e4b9'];
     const colors = Object.fromEntries(names.map((name, index) =>
         [name, palette[index] || `hsl(${Math.round(index * 137.508) % 360}, 55%, 79%)`]));
+    function createScaleControl(group, label) {
+        const state = { mode: 'absolute', instances: new Map() };
+        const peak = Object.entries(charts)
+            .filter(([id]) => id.startsWith(`${group}-`))
+            .reduce((peak, [, chart]) => chart.labels.reduce((maximum, _, index) =>
+                Math.max(maximum, chart.models.reduce((sum, model) => sum + Number(model.values[index] || 0), 0)), peak), 0);
+        // Each group shares a rounded upper bound for its stacked daily totals.
+        const axisStep = peak > 0 ? 10 ** Math.floor(Math.log10(peak)) : 1000000;
+        state.axisMax = Math.max(axisStep, Math.ceil(peak * 1.05 / axisStep) * axisStep);
+        const scaleButtons = document.querySelectorAll(`[data-${group}-scale]`);
+        scaleButtons.forEach(button => button.addEventListener('click', () => {
+            state.mode = button.getAttribute(`data-${group}-scale`);
+            scaleButtons.forEach(item => {
+                const active = item.getAttribute(`data-${group}-scale`) === state.mode;
+                item.classList.toggle('active', active);
+                item.setAttribute('aria-pressed', String(active));
+            });
+            document.getElementById(`${group}-scale-description`).textContent = state.mode === 'absolute'
+                ? `绝对用量：本月所有${label}共用纵轴刻度，便于比较实际用量。`
+                : `相对用量：各${label}纵轴独立缩放，便于查看每日变化；数值仍为实际 Token 用量。`;
+            state.instances.forEach(chart => {
+                if (state.mode === 'absolute') chart.options.scales.y.max = state.axisMax;
+                else delete chart.options.scales.y.max;
+                chart.update();
+            });
+        }));
+        return state;
+    }
+    const scaleControls = {
+        member: createScaleControl('member', '成员'),
+        platform: createScaleControl('platform', '平台')
+    };
 
     document.querySelectorAll('[data-chart-id]').forEach(panel => {
         panel.addEventListener('toggle', () => {
@@ -337,7 +389,8 @@ print(response.choices[0].message.content)</code></pre>
                 panel.querySelector('.usage-chart').hidden = true;
                 return;
             }
-            new Chart(panel.querySelector('canvas'), {
+            const scale = scaleControls[panel.dataset.chartId.split('-')[0]];
+            const instance = new Chart(panel.querySelector('canvas'), {
                 type: 'bar',
                 data: {
                     labels: data.labels,
@@ -363,12 +416,14 @@ print(response.choices[0].message.content)</code></pre>
                         y: {
                             stacked: true,
                             beginAtZero: true,
+                            ...(scale.mode === 'absolute' ? { max: scale.axisMax } : {}),
                             title: { display: true, text: '用量（M Token）' },
                             ticks: { callback: value => formatTokens(value) }
                         }
                     }
                 }
             });
+            scale.instances.set(panel.dataset.chartId, instance);
             panel.dataset.rendered = 'true';
         });
     });
