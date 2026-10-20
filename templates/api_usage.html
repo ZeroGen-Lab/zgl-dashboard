@@ -104,13 +104,8 @@
 <section class="mb-4">
     <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2">
         <h5 class="mb-0">{{ month }} 平台月度用量</h5>
-        <div class="btn-group btn-group-sm" role="group" aria-label="平台用量图表刻度">
-            <button type="button" class="btn btn-outline-primary" data-platform-scale="relative" aria-pressed="false">相对用量</button>
-            <button type="button" class="btn btn-outline-primary active" data-platform-scale="absolute" aria-pressed="true">绝对用量</button>
-        </div>
     </div>
     <p class="text-muted small mb-2">所有用量以 M（百万 Token）展示，保留两位小数；1 M = 1,000,000 Token。Token 数按 total_tokens 汇总；实际费用与 Coding Plan 积分以各平台账单为准。</p>
-    <p id="platform-scale-description" class="text-muted small mb-3" role="status">绝对用量：本月所有平台共用纵轴刻度，便于比较实际用量。</p>
     <div class="row g-3">
         {% for card in cards %}
         <div class="col-12 col-lg-6">
@@ -202,17 +197,8 @@
 <section class="mb-4">
     <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2">
         <h5 class="mb-0">各成员模型用量</h5>
-        {% if members %}
-        <div class="btn-group btn-group-sm" role="group" aria-label="成员用量图表刻度">
-            <button type="button" class="btn btn-outline-primary" data-member-scale="relative" aria-pressed="false">相对用量</button>
-            <button type="button" class="btn btn-outline-primary active" data-member-scale="absolute" aria-pressed="true">绝对用量</button>
-        </div>
-        {% endif %}
     </div>
     <p class="text-muted small mb-2">{{ month }} 月度总量按成员汇总；点击成员姓名查看所选自然月各模型的每日用量。</p>
-    {% if members %}
-    <p id="member-scale-description" class="text-muted small mb-3" role="status">绝对用量：本月所有成员共用纵轴刻度，便于比较实际用量。</p>
-    {% endif %}
     <div class="card p-4">
     {% if members %}
     {% for member in members %}
@@ -344,45 +330,20 @@ print(response.choices[0].message.content)</code></pre>
     const formatTokens = value => `${(Number(value) / 1000000).toFixed(2)} M`;
     const chartPeak = chart => chart.labels.reduce((maximum, _, index) =>
         Math.max(maximum, chart.models.reduce((sum, model) => sum + Number(model.values[index] || 0), 0)), 0);
-    const axisMaximum = peak => {
-        const step = peak > 0 ? 10 ** Math.floor(Math.log10(peak)) : 1000000;
-        return Math.max(step, Math.ceil(peak * 1.05 / step) * step);
+    const axisScale = peak => {
+        const peakM = Math.max(0, peak) / 1000000;
+        // Round the upper bound first, then divide it into five equal intervals.
+        const upperUnitM = peakM <= 50 ? 5 : (peakM <= 100 ? 10 : 100);
+        const upperM = Math.max(5, Math.ceil(peakM / upperUnitM) * upperUnitM);
+        return {
+            max: upperM * 1000000,
+            stepSize: upperM / 5 * 1000000
+        };
     };
     const names = [...new Set(Object.values(charts).flatMap(chart => chart.models.map(model => model.name)))].sort();
     const palette = ['#a9cdec', '#b9ddce', '#e8c8dc', '#f2d8b4', '#cbcdef', '#b7dfe8', '#dfd2ee', '#d5e4b9'];
     const colors = Object.fromEntries(names.map((name, index) =>
         [name, palette[index] || `hsl(${Math.round(index * 137.508) % 360}, 55%, 79%)`]));
-    function createScaleControl(group, label) {
-        const state = { mode: 'absolute', instances: new Map() };
-        const peak = Object.entries(charts)
-            .filter(([id]) => id.startsWith(`${group}-`))
-            .reduce((peak, [, chart]) => Math.max(peak, chartPeak(chart)), 0);
-        // Each group shares a rounded upper bound for its stacked daily totals.
-        state.axisMax = axisMaximum(peak);
-        const scaleButtons = document.querySelectorAll(`[data-${group}-scale]`);
-        scaleButtons.forEach(button => button.addEventListener('click', () => {
-            state.mode = button.getAttribute(`data-${group}-scale`);
-            scaleButtons.forEach(item => {
-                const active = item.getAttribute(`data-${group}-scale`) === state.mode;
-                item.classList.toggle('active', active);
-                item.setAttribute('aria-pressed', String(active));
-            });
-            document.getElementById(`${group}-scale-description`).textContent = state.mode === 'absolute'
-                ? `绝对用量：本月所有${label}共用纵轴刻度，便于比较实际用量。`
-                : `相对用量：各${label}纵轴独立缩放，便于查看每日变化；数值仍为实际 Token 用量。`;
-            state.instances.forEach((chart, id) => {
-                chart.options.scales.y.max = state.mode === 'absolute'
-                    ? state.axisMax : axisMaximum(chartPeak(charts[id]));
-                chart.update();
-            });
-        }));
-        return state;
-    }
-    const scaleControls = {
-        member: createScaleControl('member', '成员'),
-        platform: createScaleControl('platform', '平台')
-    };
-
     document.querySelectorAll('[data-chart-id]').forEach(panel => {
         panel.addEventListener('toggle', () => {
             if (!panel.open || panel.dataset.rendered) return;
@@ -394,10 +355,10 @@ print(response.choices[0].message.content)</code></pre>
                 panel.querySelector('.usage-chart').hidden = true;
                 return;
             }
-            const scale = scaleControls[panel.dataset.chartId.split('-')[0]];
-            // Reserve the same label space in both modes, using the shared maximum.
-            const axisWidth = Math.max(80, `${(scale.axisMax / 1000000).toFixed(1)} M`.length * 8 + 36);
-            const instance = new Chart(panel.querySelector('canvas'), {
+            const axis = axisScale(chartPeak(data));
+            const axisMax = axis.max;
+            const axisWidth = Math.max(80, `${axisMax / 1000000} M`.length * 8 + 36);
+            new Chart(panel.querySelector('canvas'), {
                 type: 'bar',
                 data: {
                     labels: data.labels,
@@ -429,15 +390,13 @@ print(response.choices[0].message.content)</code></pre>
                             stacked: true,
                             beginAtZero: true,
                             min: 0,
-                            max: scale.mode === 'absolute' ? scale.axisMax : axisMaximum(chartPeak(data)),
+                            max: axisMax,
                             title: { display: true, text: '用量（M Token）' },
-                            // Seven tick marks delimit six equal grid intervals.
-                            ticks: { count: 7, autoSkip: false, callback: value => `${(Number(value) / 1000000).toFixed(1)} M` }
+                            ticks: { count: 6, stepSize: axis.stepSize, autoSkip: false, callback: value => `${(Number(value) / 1000000).toFixed(0)} M` }
                         }
                     }
                 }
             });
-            scale.instances.set(panel.dataset.chartId, instance);
             panel.dataset.rendered = 'true';
         });
     });
