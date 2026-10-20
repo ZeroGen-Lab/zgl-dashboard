@@ -294,6 +294,19 @@ def save_records(conn, records, mirrored):
         mirrored_at=excluded.mirrored_at''', [(*r, mirrored) for r in records])
 
 
+def prune_zero_token_records(conn):
+    """Remove zero-token details across the mirror, retaining monthly summaries."""
+    condition = 'input_tokens=0 AND output_tokens=0 AND total_tokens=0'
+    groups = [dict(row) for row in conn.execute(f'''
+        SELECT platform, model, COUNT(*) AS record_count
+        FROM usage_records WHERE {condition}
+        GROUP BY platform, model ORDER BY platform, model
+    ''')]
+    deleted = conn.execute(f'DELETE FROM usage_records WHERE {condition}').rowcount
+    LOG.info('镜像零 Token 明细清理：%d 条，平台与模型分组：%s', deleted, groups)
+    return deleted
+
+
 def prune_old_records(conn, current_month):
     """Keep the current month plus the preceding two natural months."""
     cutoff = previous_month(current_month, 2) + '-01'
@@ -359,6 +372,7 @@ def _sync_usage_full(config, primary_path, session=None, now=None):
             status = 'success' if not errors else ('partial' if len(errors) < len(months) else 'error')
             deleted_count = 0
             with closing(connect(path)) as conn, conn:
+                zero_deleted_count = prune_zero_token_records(conn)
                 if not errors:
                     deleted_count, cutoff = prune_old_records(conn, current)
                 conn.execute('''UPDATE usage_sync_runs SET finished_at=?,status=?,months_requested=?,
@@ -369,7 +383,7 @@ def _sync_usage_full(config, primary_path, session=None, now=None):
                 raise SyncError('部分月份同步失败：' + ', '.join(errors))
             LOG.info('B 端已删除 %s 之前的明细 %d 条', cutoff, deleted_count)
             return {'months': len(months), 'records': record_count, 'summaries': summary_count,
-                    'records_deleted': deleted_count}
+                    'records_deleted': deleted_count, 'zero_token_records_deleted': zero_deleted_count}
         except Exception:
             if run_id is not None:
                 with closing(connect(path)) as conn, conn:
@@ -504,6 +518,7 @@ def _sync_usage_incremental(config, primary_path, session, now=None):
             status = 'success' if not errors else ('partial' if len(errors) < len(months) + 1 else 'error')
             deleted_count = 0
             with closing(connect(path)) as conn, conn:
+                zero_deleted_count = prune_zero_token_records(conn)
                 if not errors:
                     deleted_count, cutoff = prune_old_records(conn, current)
                 conn.execute('''UPDATE usage_sync_runs SET finished_at=?,status=?,months_requested=?,
@@ -514,7 +529,7 @@ def _sync_usage_incremental(config, primary_path, session, now=None):
                 raise SyncError('增量同步失败：' + ', '.join(errors))
             LOG.info('B 端已删除 %s 之前的明细 %d 条', cutoff, deleted_count)
             return {'months': len(months), 'records': record_count, 'summaries': summary_count,
-                    'records_deleted': deleted_count}
+                    'records_deleted': deleted_count, 'zero_token_records_deleted': zero_deleted_count}
         except Exception:
             with closing(connect(path)) as conn, conn:
                 conn.execute('''UPDATE usage_sync_runs SET finished_at=?,status='error',
