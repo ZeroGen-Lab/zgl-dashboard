@@ -23,6 +23,8 @@
     .usage-chart-chevron { display: inline-block; transform: rotate(0deg); }
     .usage-chart-panel[open] > summary .usage-chart-chevron { transform: rotate(180deg); }
     .usage-chart { position: relative; height: 230px; }
+    #member-token-title { font-size: 1.05rem; font-weight: 600; white-space: nowrap; }
+    #member-token-copy { width: 7rem; flex-shrink: 0; }
     .usage-base-url { overflow-wrap: anywhere; }
     .usage-example { background: #f5f8fb; border: 1px solid #dce6ef; border-radius: .5rem; overflow-x: auto; }
     .usage-member-chart-title { font-family: "Noto Serif SC", "Songti SC", "SimSun", Georgia, serif; font-size: 1.05rem; font-weight: 600; letter-spacing: .03em; color: #587b98; }
@@ -81,12 +83,16 @@
 </div>
 
 <section class="card p-4 mb-4" aria-labelledby="member-token-title">
-    <h5 id="member-token-title" class="mb-2">我的 API 令牌</h5>
-    <p class="small text-muted mb-2">调用时将下方完整令牌填入 API Key，无需添加姓名或 sk- 前缀。<strong>请勿分享给他人。</strong></p>
+    <div class="d-flex flex-nowrap align-items-center gap-2 mb-2">
+        <h5 id="member-token-title" class="mb-0">我的API令牌</h5>
+        {% if member_token %}
+        <button id="member-token-copy" class="btn btn-sm btn-outline-primary text-nowrap" type="button" aria-controls="member-api-token" aria-expanded="false">显示并全选</button>
+        {% endif %}
+    </div>
+    <!-- <p class="small text-muted mb-2">调用时将下方完整令牌填入 API Key，无需添加姓名或 sk- 前缀。<strong>请勿分享给他人。</strong></p> -->
     {% if member_token %}
     <div class="d-flex flex-wrap align-items-center gap-2">
-        <input id="member-api-token" class="form-control font-monospace flex-grow-1" style="min-width: 0; flex-basis: 28rem;" type="text" value="{{ member_token }}" aria-label="我的完整 API 令牌" autocomplete="off" spellcheck="false" readonly>
-        <button id="member-token-copy" class="btn btn-outline-primary text-nowrap" type="button"> 全选 </button>
+        <input id="member-api-token" class="form-control font-monospace flex-grow-1" style="min-width: 0; flex-basis: 28rem;" type="text" value="" aria-label="我的完整 API 令牌" autocomplete="off" spellcheck="false" readonly hidden>
     </div>
     <div id="member-token-message" class="small mt-2" role="status" aria-live="polite"></div>
     {% if member_token_note %}<p class="small text-muted mb-0 mt-2">{{ member_token_note }}</p>{% endif %}
@@ -96,7 +102,15 @@
 </section>
 
 <section class="mb-4">
-    <h5 class="mb-3">{{ month }} 平台月度用量</h5>
+    <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2">
+        <h5 class="mb-0">{{ month }} 平台月度用量</h5>
+        <div class="btn-group btn-group-sm" role="group" aria-label="平台用量图表刻度">
+            <button type="button" class="btn btn-outline-primary" data-platform-scale="relative" aria-pressed="false">相对用量</button>
+            <button type="button" class="btn btn-outline-primary active" data-platform-scale="absolute" aria-pressed="true">绝对用量</button>
+        </div>
+    </div>
+    <p class="text-muted small mb-2">所有用量以 M（百万 Token）展示，保留两位小数；1 M = 1,000,000 Token。Token 数按 total_tokens 汇总；实际费用与 Coding Plan 积分以各平台账单为准。</p>
+    <p id="platform-scale-description" class="text-muted small mb-3" role="status">绝对用量：本月所有平台共用纵轴刻度，便于比较实际用量。</p>
     <div class="row g-3">
         {% for card in cards %}
         <div class="col-12 col-lg-6">
@@ -165,13 +179,14 @@
                             <div class="d-flex flex-wrap gap-2 ms-auto">
                                 {% if key.configured %}
                                 <button type="button" class="btn btn-sm btn-outline-primary" data-key-action="claim" {% if key.claimed %}hidden{% endif %} {% if key.blocked %}disabled title="请先停止使用已登记的智谱 Key"{% endif %}>＋ 登记使用</button>
-                                <button type="button" class="btn btn-sm btn-outline-primary" data-key-action="reveal" {% if not key.claimed %}hidden{% endif %}> 全选 </button>
+                                <button type="button" class="btn btn-sm btn-outline-primary" data-key-action="reveal" aria-expanded="false" {% if not key.claimed %}hidden{% endif %}>显示并全选</button>
                                 <button type="button" class="btn btn-sm btn-outline-secondary" data-key-action="release" {% if not key.claimed %}hidden{% endif %}>停止使用</button>
                                 {% else %}<span class="text-muted small">填写完整 Key 后可领取</span>{% endif %}
                             </div>
                         </div>
+                        <div class="text-muted small mt-1" data-key-users>已登记使用：{{ key.users | join('、') if key.users else '暂无' }}</div>
                         <div class="small" data-key-message aria-live="polite"></div>
-                        <input class="form-control form-control-sm mt-2 font-monospace" type="text" data-key-manual-copy aria-label="完整 Key（可选中复制）" autocomplete="off" spellcheck="false" readonly value="{{ key.secret }}" {% if not key.claimed or not key.secret %}hidden{% endif %}>
+                        <input class="form-control form-control-sm mt-2 font-monospace" type="text" data-key-manual-copy aria-label="完整 Key（可选中复制）" autocomplete="off" spellcheck="false" readonly value="" hidden>
                     </div>
                     {% else %}
                     <div class="text-muted small">尚未配置可领取的 Coding Plan Key。</div>
@@ -182,12 +197,23 @@
         </div>
         {% endfor %}
     </div>
-    <p class="text-muted small mb-0 mt-3">所有用量以 M（百万 Token）展示，保留两位小数；1 M = 1,000,000 Token。Token 数按 total_tokens 汇总；实际费用与 Coding Plan 积分以各平台账单为准。</p>
 </section>
 
-<div class="card p-4 mb-4">
-    <h5 class="mb-2">各成员模型用量</h5>
-    <p class="text-muted small mb-3">{{ month }} 月度总量按成员汇总；点击成员姓名查看所选自然月各模型的每日用量。</p>
+<section class="mb-4">
+    <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2">
+        <h5 class="mb-0">各成员模型用量</h5>
+        {% if members %}
+        <div class="btn-group btn-group-sm" role="group" aria-label="成员用量图表刻度">
+            <button type="button" class="btn btn-outline-primary" data-member-scale="relative" aria-pressed="false">相对用量</button>
+            <button type="button" class="btn btn-outline-primary active" data-member-scale="absolute" aria-pressed="true">绝对用量</button>
+        </div>
+        {% endif %}
+    </div>
+    <p class="text-muted small mb-2">{{ month }} 月度总量按成员汇总；点击成员姓名查看所选自然月各模型的每日用量。</p>
+    {% if members %}
+    <p id="member-scale-description" class="text-muted small mb-3" role="status">绝对用量：本月所有成员共用纵轴刻度，便于比较实际用量。</p>
+    {% endif %}
+    <div class="card p-4">
     {% if members %}
     {% for member in members %}
     <details class="usage-chart-panel border rounded mb-2" data-chart-id="{{ member.chart_id }}">
@@ -209,7 +235,8 @@
     {% else %}
     <p class="text-muted mb-0">本月暂无成员模型用量记录。</p>
     {% endif %}
-</div>
+    </div>
+</section>
 <section class="card p-4 mb-4" aria-labelledby="usage-guide-title">
     <h5 id="usage-guide-title" class="mb-2">如何调用</h5>
     <p class="small mb-2">每位成员使用页面顶部的个人 API 令牌（需 Proxy 启用新令牌认证），将其保存到环境变量 <code>ZGL_MEMBER_TOKEN</code>。百炼真实 Key 由 Proxy 统一保管，无需申请或配置个人百炼 Key。安装 Python SDK：<code>pip install openai</code>。</p>
@@ -280,12 +307,34 @@ print(response.choices[0].message.content)</code></pre>
     const button = document.getElementById('member-token-copy');
     if (!input || !button) return;
     const message = document.getElementById('member-token-message');
+    let hideTimer;
+    function hideToken() {
+        clearTimeout(hideTimer);
+        input.hidden = true;
+        input.value = '';
+        button.setAttribute('aria-expanded', 'false');
+        button.textContent = '显示并全选';
+        message.textContent = '';
+    }
+    document.addEventListener('visibilitychange', () => { if (document.hidden) hideToken(); });
+    window.addEventListener('pagehide', hideToken);
     input.addEventListener('click', () => input.select());
     button.addEventListener('click', () => {
+        clearTimeout(hideTimer);
+        if (document.hidden) return;
+        if (!input.hidden) {
+            hideToken();
+            return;
+        }
+        input.value = {{ member_token | tojson }};
+        input.hidden = false;
+        button.setAttribute('aria-expanded', 'true');
+        button.textContent = '收起';
         input.focus();
         input.select();
         input.setSelectionRange(0, input.value.length);
-        message.textContent = '令牌已全选，请按 Ctrl+C（⌘C）复制。';
+        message.textContent = '令牌已全选，请按 Ctrl+C（⌘C）复制，5 秒后自动隐藏。';
+        hideTimer = setTimeout(hideToken, 5000);
     });
 })();
 </script>
@@ -293,10 +342,46 @@ print(response.choices[0].message.content)</code></pre>
 (function () {
     const charts = {{ model_charts | tojson }};
     const formatTokens = value => `${(Number(value) / 1000000).toFixed(2)} M`;
+    const chartPeak = chart => chart.labels.reduce((maximum, _, index) =>
+        Math.max(maximum, chart.models.reduce((sum, model) => sum + Number(model.values[index] || 0), 0)), 0);
+    const axisMaximum = peak => {
+        const step = peak > 0 ? 10 ** Math.floor(Math.log10(peak)) : 1000000;
+        return Math.max(step, Math.ceil(peak * 1.05 / step) * step);
+    };
     const names = [...new Set(Object.values(charts).flatMap(chart => chart.models.map(model => model.name)))].sort();
     const palette = ['#a9cdec', '#b9ddce', '#e8c8dc', '#f2d8b4', '#cbcdef', '#b7dfe8', '#dfd2ee', '#d5e4b9'];
     const colors = Object.fromEntries(names.map((name, index) =>
         [name, palette[index] || `hsl(${Math.round(index * 137.508) % 360}, 55%, 79%)`]));
+    function createScaleControl(group, label) {
+        const state = { mode: 'absolute', instances: new Map() };
+        const peak = Object.entries(charts)
+            .filter(([id]) => id.startsWith(`${group}-`))
+            .reduce((peak, [, chart]) => Math.max(peak, chartPeak(chart)), 0);
+        // Each group shares a rounded upper bound for its stacked daily totals.
+        state.axisMax = axisMaximum(peak);
+        const scaleButtons = document.querySelectorAll(`[data-${group}-scale]`);
+        scaleButtons.forEach(button => button.addEventListener('click', () => {
+            state.mode = button.getAttribute(`data-${group}-scale`);
+            scaleButtons.forEach(item => {
+                const active = item.getAttribute(`data-${group}-scale`) === state.mode;
+                item.classList.toggle('active', active);
+                item.setAttribute('aria-pressed', String(active));
+            });
+            document.getElementById(`${group}-scale-description`).textContent = state.mode === 'absolute'
+                ? `绝对用量：本月所有${label}共用纵轴刻度，便于比较实际用量。`
+                : `相对用量：各${label}纵轴独立缩放，便于查看每日变化；数值仍为实际 Token 用量。`;
+            state.instances.forEach((chart, id) => {
+                chart.options.scales.y.max = state.mode === 'absolute'
+                    ? state.axisMax : axisMaximum(chartPeak(charts[id]));
+                chart.update();
+            });
+        }));
+        return state;
+    }
+    const scaleControls = {
+        member: createScaleControl('member', '成员'),
+        platform: createScaleControl('platform', '平台')
+    };
 
     document.querySelectorAll('[data-chart-id]').forEach(panel => {
         panel.addEventListener('toggle', () => {
@@ -309,7 +394,10 @@ print(response.choices[0].message.content)</code></pre>
                 panel.querySelector('.usage-chart').hidden = true;
                 return;
             }
-            new Chart(panel.querySelector('canvas'), {
+            const scale = scaleControls[panel.dataset.chartId.split('-')[0]];
+            // Reserve the same label space in both modes, using the shared maximum.
+            const axisWidth = Math.max(80, `${(scale.axisMax / 1000000).toFixed(1)} M`.length * 8 + 36);
+            const instance = new Chart(panel.querySelector('canvas'), {
                 type: 'bar',
                 data: {
                     labels: data.labels,
@@ -331,16 +419,25 @@ print(response.choices[0].message.content)</code></pre>
                         } }
                     },
                     scales: {
-                        x: { stacked: true, grid: { display: false }, ticks: { autoSkip: true, maxTicksLimit: 16, maxRotation: 45 } },
+                        x: {
+                            stacked: true,
+                            grid: { display: false },
+                            ticks: { autoSkip: true, maxTicksLimit: 16, minRotation: 45, maxRotation: 45 }
+                        },
                         y: {
+                            afterFit: axis => { axis.width = axisWidth; },
                             stacked: true,
                             beginAtZero: true,
+                            min: 0,
+                            max: scale.mode === 'absolute' ? scale.axisMax : axisMaximum(chartPeak(data)),
                             title: { display: true, text: '用量（M Token）' },
-                            ticks: { callback: value => formatTokens(value) }
+                            // Seven tick marks delimit six equal grid intervals.
+                            ticks: { count: 7, autoSkip: false, callback: value => `${(Number(value) / 1000000).toFixed(1)} M` }
                         }
                     }
                 }
             });
+            scale.instances.set(panel.dataset.chartId, instance);
             panel.dataset.rendered = 'true';
         });
     });
@@ -393,6 +490,16 @@ print(response.choices[0].message.content)</code></pre>
     updateButtons();
     document.querySelectorAll('.coding-plan-key').forEach(row => {
         const manual = row.querySelector('[data-key-manual-copy]');
+        let hideTimer;
+        function hideKey() {
+            clearTimeout(hideTimer);
+            manual.hidden = true;
+            manual.value = '';
+            row.querySelector('[data-key-action="reveal"]')?.setAttribute('aria-expanded', 'false');
+            row.querySelector('[data-key-message]').textContent = '';
+        }
+        document.addEventListener('visibilitychange', () => { if (document.hidden) hideKey(); });
+        window.addEventListener('pagehide', hideKey);
         manual.addEventListener('click', () => manual.select());
         row.querySelectorAll('[data-key-action]').forEach(button => {
             button.addEventListener('click', async () => {
@@ -412,20 +519,23 @@ print(response.choices[0].message.content)</code></pre>
                     if (!response.ok) throw new Error(result.error || '操作失败，请重试');
                     row.dataset.keyClaimed = String(result.claimed);
                     row.querySelector('[data-key-count]').textContent = `${result.count} 人使用`;
+                    row.querySelector('[data-key-users]').textContent = `已登记使用：${result.users.length ? result.users.join('、') : '暂无'}`;
                     row.querySelector('[data-key-action="claim"]').hidden = result.claimed;
                     row.querySelector('[data-key-action="reveal"]').hidden = !result.claimed;
                     row.querySelector('[data-key-action="release"]').hidden = !result.claimed;
-                    if (result.secret) {
+                    if (result.secret && !document.hidden) {
+                        clearTimeout(hideTimer);
                         manual.value = result.secret;
                         manual.hidden = false;
+                        row.querySelector('[data-key-action="reveal"]').setAttribute('aria-expanded', 'true');
                         manual.focus();
                         manual.select();
                         manual.setSelectionRange(0, manual.value.length);
-                        message.textContent = '完整 Key 已全选，请按 Ctrl+C（⌘C）复制。';
+                        message.textContent = '完整 Key 已全选，请按 Ctrl+C（⌘C）复制，5 秒后自动隐藏。';
+                        hideTimer = setTimeout(hideKey, 5000);
                     } else {
-                        manual.hidden = true;
-                        manual.value = '';
-                        message.textContent = '已取消使用登记。';
+                        hideKey();
+                        message.textContent = result.claimed ? '' : '已取消使用登记。';
                     }
                 } catch (error) {
                     message.textContent = error.message;

@@ -15,7 +15,7 @@ import yaml
 from auth import is_admin, login_required
 from config import ClaimConflict, change_claim, claim_status, masked
 from db import get_db_connection
-from db_usage import SHANGHAI, read_dashboard, read_member_usage
+from db_usage import SHANGHAI, connect, read_dashboard, read_member_usage
 from usage_sync import SyncError, sync_usage, valid_month
 
 usage_bp = Blueprint('usage', __name__)
@@ -100,6 +100,25 @@ def load_member_names():
     }
 
 
+def load_key_users(path):
+    """Resolve registered key users to display names without exposing key values."""
+    users = defaultdict(list)
+    if not path or not Path(path).is_file():
+        return users
+    try:
+        with closing(connect(path, readonly=True)) as conn:
+            rows = conn.execute(
+                'SELECT key_id, username FROM coding_plan_claims ORDER BY claimed_at, username'
+            ).fetchall()
+    except sqlite3.Error:
+        LOG.warning('无法读取 Coding Plan 使用名单')
+        return users
+    names = load_member_names()
+    for row in rows:
+        users[row['key_id']].append(names.get(row['username'], row['username']))
+    return users
+
+
 @usage_bp.route('/api-usage')
 @login_required
 def api_usage():
@@ -126,6 +145,7 @@ def api_usage():
         observed_platforms.add(platform)
     coding_keys = current_app.config.get('CODING_PLAN_KEYS') or []
     counts, claimed = claim_status(options.get('mirror_db_path'), session['user']) if coding_keys else ({}, set())
+    key_users = load_key_users(options.get('mirror_db_path')) if coding_keys else {}
     usage_content = load_usage_content()
     platform_info = load_platform_info(content=usage_content)
     member_token_note = usage_content.get('member_token_note', '')
@@ -144,7 +164,8 @@ def api_usage():
                    'blocked': key['platform'] == 'zhipu' and key['id'] not in claimed and any(
                        item['id'] in claimed for item in coding_keys if item['platform'] == 'zhipu'),
                    'secret': key['secret'] if key['id'] in claimed else '',
-                   'count': counts.get(key['id'], 0), 'claimed': key['id'] in claimed}
+                   'count': counts.get(key['id'], 0), 'claimed': key['id'] in claimed,
+                   'users': key_users.get(key['id'], [])}
                   for key in coding_keys if key['platform'] == card['id']
               ],
               'has_data': card['id'] in observed_platforms}
@@ -268,7 +289,8 @@ def coding_plan_key_action(key_id, action):
     except (OSError, sqlite3.Error, ValueError):
         current_app.logger.exception('Coding Plan 使用登记失败')
         return jsonify(error='暂时无法保存使用登记'), 500
-    payload = {'count': count, 'claimed': is_claimed}
+    payload = {'count': count, 'claimed': is_claimed,
+               'users': load_key_users(path).get(key_id, [])}
     if action in ('claim', 'reveal'):
         payload['secret'] = key['secret']
     response = jsonify(payload)
