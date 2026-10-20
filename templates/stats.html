@@ -97,7 +97,7 @@ new Chart(ctx, {
                 title: { display: true, text: '天数' },
                 min: 0,
                 max: 30,
-                ticks: { stepSize: 5 }
+                ticks: { count: 7, autoSkip: false, callback: value => Number(value).toFixed(1) }
             },
             y: {
                 ticks: { stepSize: 1 }

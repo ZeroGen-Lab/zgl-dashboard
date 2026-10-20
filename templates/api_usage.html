@@ -342,6 +342,12 @@ print(response.choices[0].message.content)</code></pre>
 (function () {
     const charts = {{ model_charts | tojson }};
     const formatTokens = value => `${(Number(value) / 1000000).toFixed(2)} M`;
+    const chartPeak = chart => chart.labels.reduce((maximum, _, index) =>
+        Math.max(maximum, chart.models.reduce((sum, model) => sum + Number(model.values[index] || 0), 0)), 0);
+    const axisMaximum = peak => {
+        const step = peak > 0 ? 10 ** Math.floor(Math.log10(peak)) : 1000000;
+        return Math.max(step, Math.ceil(peak * 1.05 / step) * step);
+    };
     const names = [...new Set(Object.values(charts).flatMap(chart => chart.models.map(model => model.name)))].sort();
     const palette = ['#a9cdec', '#b9ddce', '#e8c8dc', '#f2d8b4', '#cbcdef', '#b7dfe8', '#dfd2ee', '#d5e4b9'];
     const colors = Object.fromEntries(names.map((name, index) =>
@@ -350,11 +356,9 @@ print(response.choices[0].message.content)</code></pre>
         const state = { mode: 'absolute', instances: new Map() };
         const peak = Object.entries(charts)
             .filter(([id]) => id.startsWith(`${group}-`))
-            .reduce((peak, [, chart]) => chart.labels.reduce((maximum, _, index) =>
-                Math.max(maximum, chart.models.reduce((sum, model) => sum + Number(model.values[index] || 0), 0)), peak), 0);
+            .reduce((peak, [, chart]) => Math.max(peak, chartPeak(chart)), 0);
         // Each group shares a rounded upper bound for its stacked daily totals.
-        const axisStep = peak > 0 ? 10 ** Math.floor(Math.log10(peak)) : 1000000;
-        state.axisMax = Math.max(axisStep, Math.ceil(peak * 1.05 / axisStep) * axisStep);
+        state.axisMax = axisMaximum(peak);
         const scaleButtons = document.querySelectorAll(`[data-${group}-scale]`);
         scaleButtons.forEach(button => button.addEventListener('click', () => {
             state.mode = button.getAttribute(`data-${group}-scale`);
@@ -366,9 +370,9 @@ print(response.choices[0].message.content)</code></pre>
             document.getElementById(`${group}-scale-description`).textContent = state.mode === 'absolute'
                 ? `绝对用量：本月所有${label}共用纵轴刻度，便于比较实际用量。`
                 : `相对用量：各${label}纵轴独立缩放，便于查看每日变化；数值仍为实际 Token 用量。`;
-            state.instances.forEach(chart => {
-                if (state.mode === 'absolute') chart.options.scales.y.max = state.axisMax;
-                else delete chart.options.scales.y.max;
+            state.instances.forEach((chart, id) => {
+                chart.options.scales.y.max = state.mode === 'absolute'
+                    ? state.axisMax : axisMaximum(chartPeak(charts[id]));
                 chart.update();
             });
         }));
@@ -391,6 +395,8 @@ print(response.choices[0].message.content)</code></pre>
                 return;
             }
             const scale = scaleControls[panel.dataset.chartId.split('-')[0]];
+            // Reserve the same label space in both modes, using the shared maximum.
+            const axisWidth = Math.max(80, `${(scale.axisMax / 1000000).toFixed(1)} M`.length * 8 + 36);
             const instance = new Chart(panel.querySelector('canvas'), {
                 type: 'bar',
                 data: {
@@ -413,13 +419,20 @@ print(response.choices[0].message.content)</code></pre>
                         } }
                     },
                     scales: {
-                        x: { stacked: true, grid: { display: false }, ticks: { autoSkip: true, maxTicksLimit: 16, maxRotation: 45 } },
+                        x: {
+                            stacked: true,
+                            grid: { display: false },
+                            ticks: { autoSkip: true, maxTicksLimit: 16, minRotation: 45, maxRotation: 45 }
+                        },
                         y: {
+                            afterFit: axis => { axis.width = axisWidth; },
                             stacked: true,
                             beginAtZero: true,
-                            ...(scale.mode === 'absolute' ? { max: scale.axisMax } : {}),
+                            min: 0,
+                            max: scale.mode === 'absolute' ? scale.axisMax : axisMaximum(chartPeak(data)),
                             title: { display: true, text: '用量（M Token）' },
-                            ticks: { callback: value => formatTokens(value) }
+                            // Seven tick marks delimit six equal grid intervals.
+                            ticks: { count: 7, autoSkip: false, callback: value => `${(Number(value) / 1000000).toFixed(1)} M` }
                         }
                     }
                 }
