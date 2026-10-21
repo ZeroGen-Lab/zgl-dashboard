@@ -13,7 +13,7 @@ from flask import Blueprint, current_app, jsonify, render_template, request, ses
 import yaml
 
 from auth import is_admin, login_required
-from config import ClaimConflict, change_claim, claim_status, masked
+from coding_plan import ClaimConflict, change_claim, claim_status, masked
 from db import get_db_connection
 from db_usage import SHANGHAI, connect, read_dashboard, read_member_usage
 from usage_sync import SyncError, sync_usage, valid_month

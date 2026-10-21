@@ -4,9 +4,8 @@
 
 # 生产环境配置
 server:
-  db_path: /zero/zgl-dashboard-data/attendance.db
-  # 仅存放生产库的备份文件，不决定 db_path 的位置。
-  db_bak_dir: /zero/zgl-dashboard-data/db
+  db_path: dbs/attendance.db                # 相对路径，anchor位project根目录
+  db_bak_dir: /zero/zgl-dashboard-data/db   # 备份在仓库外，此处为绝对路径。 
   port: 5000
   secret_key: YOUR_SECRET_KEY_HERE
   api_secret: YOUR_API_SECRET_HERE
@@ -46,18 +45,18 @@ server:
     enabled: true
     base_url: https://YOUR_PROXY_HOST
     dashboard_token: REPLACE_WITH_RANDOM_DASHBOARD_SERVICE_TOKEN
-    mirror_db_path: /zero/zgl-dashboard-data/llm_usage_mirror.db
+    mirror_db_path: dbs/llm_usage_mirror.db
     timeout_seconds: 20
     sync_start_month: '2026-10'
 
 # 预发环境配置（python app.py pre 或 ZGL_ENV=pre python app.py）
 # 未指定的字段回退到 server 的值
 pre:
-  db_path: /zero/zgl-dashboard-data/attendance_pre.db
+  db_path: dbs/attendance_pre.db
   port: 5001
   llm_usage_sync:
     enabled: true
-    mirror_db_path: /zero/zgl-dashboard-data/llm_usage_mirror_pre.db
+    mirror_db_path: dbs/llm_usage_mirror_pre.db
 
 # 端侧（树莓派）配置
 client:

@@ -1,5 +1,8 @@
+import os
 import sqlite3
 from config import DB_PATH
+
+os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
 
 def get_db_connection():
