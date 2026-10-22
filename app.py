@@ -125,4 +125,4 @@ if _need_backup or _need_onsite_report or _need_usage:
     _scheduler.start()
 
 if __name__ == '__main__':
-    app.run(host='127.0.0.1' if ENV == 'test' else '0.0.0.0', port=PORT, threaded=True)
+    app.run(host='0.0.0.0', port=PORT, threaded=True)

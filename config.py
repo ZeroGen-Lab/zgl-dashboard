@@ -5,13 +5,13 @@ from pathlib import Path
 
 from coding_plan import validate_keys
 
-# --- 环境检测：测试环境必须显式指定独立数据库，不读取真实配置 ---
+# --- 环境检测：仅区分生产 prod 与预发 pre ---
 def get_env():
     requested = os.environ.get('ZGL_ENV')
-    if requested in ('pre', 'test'):
+    if requested == 'pre':
         return requested
-    if len(sys.argv) > 1 and sys.argv[1] in ('pre', 'test'):
-        return sys.argv[1]
+    if len(sys.argv) > 1 and sys.argv[1] == 'pre':
+        return 'pre'
     return 'prod'
 
 
@@ -37,27 +37,12 @@ def cli_option(name):
     return sys.argv[index + 1]
 
 
-if ENV == 'test':
-    import secrets
-    _test_db = os.environ.get('ZGL_TEST_DB_PATH')
-    if not _test_db or not os.path.isabs(_test_db):
-        raise RuntimeError('测试环境需要通过 ZGL_TEST_DB_PATH 指定独立数据库的绝对路径。')
-    _effective = {
-        'db_path': _test_db,
-        'db_bak_dir': os.path.dirname(_test_db),
-        'port': int(os.environ.get('ZGL_TEST_PORT', '5051')),
-        'api_secret': 'zgl-local-test-only',
-        'secret_key': secrets.token_hex(32),
-        'allowed_checkin_ips': ['127.0.0.1', '::1'],
-    }
-    USERS_PATH = os.environ.get('ZGL_TEST_USERS_PATH', _test_db + '.users.txt')
-else:
-    _config_path = cli_option('--config') or  _anchor('.config.yml')
-    with open(_config_path, encoding='utf-8') as f:
-        _config = yaml.safe_load(f)
-    _server = _config['server']
-    _effective = {**_server, **_config.get('pre', {})} if ENV == 'pre' else _server
-    USERS_PATH =  _anchor('.users.txt')
+_config_path = cli_option('--config') or _anchor('.config.yml')
+with open(_config_path, encoding='utf-8') as f:
+    _config = yaml.safe_load(f)
+_server = _config['server']
+_effective = {**_server, **_config.get('pre', {})} if ENV == 'pre' else _server
+USERS_PATH = _anchor('.users.txt')
 
 DB_PATH = _anchor(_effective['db_path'])
 DB_BAK_DIR = _anchor(_effective['db_bak_dir'])
@@ -80,16 +65,10 @@ if ENV == 'pre':
     LLM_USAGE_SYNC = {**_server.get('llm_usage_sync', {}), **_pre_usage}
     if not _pre_usage.get('mirror_db_path'):
         LLM_USAGE_SYNC = {'enabled': False}
-if ENV == 'test':
-    LLM_USAGE_SYNC = {
-        'enabled': False,
-        'mirror_db_path': os.environ.get('ZGL_TEST_USAGE_DB_PATH', _test_db + '.usage.db'),
-    }
 if LLM_USAGE_SYNC.get('mirror_db_path'):
     LLM_USAGE_SYNC['mirror_db_path'] = _anchor(LLM_USAGE_SYNC['mirror_db_path'])
 
 flask_config = {
-    'ENV_NAME': ENV,
     'DB_PATH': DB_PATH,
     'API_SECRET': API_SECRET,
     'DB_BAK_DIR': DB_BAK_DIR,
