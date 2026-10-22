@@ -1,99 +1,30 @@
 import os
-import re
-import sqlite3
 import sys
 import yaml
-from contextlib import closing
 from pathlib import Path
 
-from db_usage import connect, initialize as initialize_usage_mirror
+from coding_plan import validate_keys
 
-
-KEY_ID_RE = re.compile(r'^[a-zA-Z0-9_.-]{1,80}$')
-CODING_PLAN_PLATFORMS = {'deepseek', 'zhipu'}
-
-
-def validate_keys(keys):
-    if not isinstance(keys, list):
-        raise ValueError('Coding Plan keys must be a list')
-    seen = set()
-    for key in keys:
-        if not isinstance(key, dict) or not isinstance(key.get('id'), str) or not KEY_ID_RE.fullmatch(key['id']):
-            raise ValueError('Coding Plan key id is invalid')
-        if key['id'] in seen:
-            raise ValueError('Coding Plan key ids must be unique')
-        seen.add(key['id'])
-        if key.get('platform') not in CODING_PLAN_PLATFORMS:
-            raise ValueError('Coding Plan platform must be deepseek or zhipu')
-        if not isinstance(key.get('label'), str) or not key['label'].strip():
-            raise ValueError('Coding Plan key label is missing')
-        if (not isinstance(key.get('secret'), str)
-                or (key['secret'] and not key['secret'].strip())
-                or key['secret'].startswith('REPLACE_WITH_')):
-            raise ValueError('Coding Plan key secret is invalid')
-
-
-def masked(secret):
-    if len(secret) < 12:
-        return '••••••••'
-    return secret[:4] + '••••••••' + secret[-4:]
-
-
-def claim_status(path, username):
-    if not path or not Path(path).is_file():
-        return {}, set()
-    try:
-        with closing(connect(path, readonly=True)) as conn:
-            counts = {row['key_id']: row['user_count'] for row in conn.execute(
-                'SELECT key_id, COUNT(*) user_count FROM coding_plan_claims GROUP BY key_id')}
-            claimed = {row['key_id'] for row in conn.execute(
-                'SELECT key_id FROM coding_plan_claims WHERE username=?', (username,))}
-            return counts, claimed
-    except sqlite3.Error:
-        return {}, set()
-
-
-class ClaimConflict(ValueError):
-    pass
-
-
-def change_claim(path, primary_path, key_id, username, action, exclusive_ids=()):
-    initialize_usage_mirror(path, primary_path)
-    with closing(connect(path)) as conn, conn:
-        conn.execute('BEGIN IMMEDIATE')
-        if action == 'claim':
-            if exclusive_ids:
-                placeholders = ','.join('?' for _ in exclusive_ids)
-                other = conn.execute(
-                    f'SELECT 1 FROM coding_plan_claims WHERE username=? AND key_id<>? '
-                    f'AND key_id IN ({placeholders}) LIMIT 1',
-                    (username, key_id, *exclusive_ids)).fetchone()
-                if other:
-                    raise ClaimConflict('每人只能登记一个智谱 Key，请先停止使用已登记的 Key。')
-            conn.execute('INSERT OR IGNORE INTO coding_plan_claims(key_id,username) VALUES (?,?)',
-                         (key_id, username))
-        elif action == 'release':
-            conn.execute('DELETE FROM coding_plan_claims WHERE key_id=? AND username=?',
-                         (key_id, username))
-        claimed = conn.execute(
-            'SELECT 1 FROM coding_plan_claims WHERE key_id=? AND username=?',
-            (key_id, username)).fetchone() is not None
-        count = conn.execute('SELECT COUNT(*) FROM coding_plan_claims WHERE key_id=?',
-                             (key_id,)).fetchone()[0]
-        return count, claimed
-
-# --- 环境检测：测试环境必须显式指定独立数据库，不读取真实配置 ---
+# --- 环境检测：仅区分生产 prod 与预发 pre ---
 def get_env():
     requested = os.environ.get('ZGL_ENV')
-    if requested in ('pre', 'test'):
+    if requested == 'pre':
         return requested
-    if len(sys.argv) > 1 and sys.argv[1] in ('pre', 'test'):
-        return sys.argv[1]
+    if len(sys.argv) > 1 and sys.argv[1] == 'pre':
+        return 'pre'
     return 'prod'
 
 
 ENV = get_env()
 _project_dir = os.path.dirname(os.path.abspath(__file__))
+
+
+def _anchor(path):
+    """相对路径锚定到项目目录"""
+    if not path:
+        return path
+    p = Path(path)
+    return str(p) if p.is_absolute() else str(Path(_project_dir) / p)
 
 
 def cli_option(name):
@@ -106,30 +37,15 @@ def cli_option(name):
     return sys.argv[index + 1]
 
 
-if ENV == 'test':
-    import secrets
-    _test_db = os.environ.get('ZGL_TEST_DB_PATH')
-    if not _test_db or not os.path.isabs(_test_db):
-        raise RuntimeError('测试环境需要通过 ZGL_TEST_DB_PATH 指定独立数据库的绝对路径。')
-    _effective = {
-        'db_path': _test_db,
-        'db_bak_dir': os.path.dirname(_test_db),
-        'port': int(os.environ.get('ZGL_TEST_PORT', '5051')),
-        'api_secret': 'zgl-local-test-only',
-        'secret_key': secrets.token_hex(32),
-        'allowed_checkin_ips': ['127.0.0.1', '::1'],
-    }
-    USERS_PATH = os.environ.get('ZGL_TEST_USERS_PATH', _test_db + '.users.txt')
-else:
-    _config_path = cli_option('--config') or os.path.join(_project_dir, '.config.yml')
-    with open(_config_path, encoding='utf-8') as f:
-        _config = yaml.safe_load(f)
-    _server = _config['server']
-    _effective = {**_server, **_config.get('pre', {})} if ENV == 'pre' else _server
-    USERS_PATH = os.path.join(_project_dir, '.users.txt')
+_config_path = cli_option('--config') or _anchor('.config.yml')
+with open(_config_path, encoding='utf-8') as f:
+    _config = yaml.safe_load(f)
+_server = _config['server']
+_effective = {**_server, **_config.get('pre', {})} if ENV == 'pre' else _server
+USERS_PATH = _anchor('.users.txt')
 
-DB_PATH = _effective['db_path']
-DB_BAK_DIR = _effective['db_bak_dir']
+DB_PATH = _anchor(_effective['db_path'])
+DB_BAK_DIR = _anchor(_effective['db_bak_dir'])
 PORT = _effective['port']
 API_SECRET = _effective['api_secret']
 ALLOWED_CHECKIN_IPS = _effective['allowed_checkin_ips']
@@ -149,14 +65,10 @@ if ENV == 'pre':
     LLM_USAGE_SYNC = {**_server.get('llm_usage_sync', {}), **_pre_usage}
     if not _pre_usage.get('mirror_db_path'):
         LLM_USAGE_SYNC = {'enabled': False}
-if ENV == 'test':
-    LLM_USAGE_SYNC = {
-        'enabled': False,
-        'mirror_db_path': os.environ.get('ZGL_TEST_USAGE_DB_PATH', _test_db + '.usage.db'),
-    }
+if LLM_USAGE_SYNC.get('mirror_db_path'):
+    LLM_USAGE_SYNC['mirror_db_path'] = _anchor(LLM_USAGE_SYNC['mirror_db_path'])
 
 flask_config = {
-    'ENV_NAME': ENV,
     'DB_PATH': DB_PATH,
     'API_SECRET': API_SECRET,
     'DB_BAK_DIR': DB_BAK_DIR,

@@ -4,13 +4,17 @@
 .coding_plan_keys.yml
 .users.txt
 
-# SQLite 数据库
-attendance*.db
+# SQLite 数据库（dbs/ 为运行时生成的库文件目录；旧模式兜底根目录散落文件）
+dbs/
+attendance*.db*
 llm_usage_mirror*.db*
 
 # Python
 __pycache__/
 *.pyc
+
+# IDE
+.vscode/
 
 # Claude
 .claude/*

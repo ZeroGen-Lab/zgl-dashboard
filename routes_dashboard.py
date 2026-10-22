@@ -191,13 +191,13 @@ def stats():
         SELECT
             s.loginname,
             COALESCE(NULLIF(u.name, ''), u.loginname) as name,
-            COUNT(DISTINCT CASE WHEN s.timestamp > date('now','-15 days') THEN date(s.timestamp) END) as d15,
-            COUNT(DISTINCT CASE WHEN s.timestamp > date('now','-60 days') THEN date(s.timestamp) END) as d60,
-            COUNT(DISTINCT CASE WHEN s.timestamp > date('now','-180 days') THEN date(s.timestamp) END) as d180,
+            COUNT(DISTINCT CASE WHEN date(s.timestamp) >= date('now','localtime','-14 days') THEN date(s.timestamp) END) as d15,
+            COUNT(DISTINCT CASE WHEN date(s.timestamp) >= date('now','localtime','-59 days') THEN date(s.timestamp) END) as d60,
+            COUNT(DISTINCT CASE WHEN date(s.timestamp) >= date('now','localtime','-179 days') THEN date(s.timestamp) END) as d180,
             COUNT(DISTINCT CASE WHEN strftime('%Y-%m',s.timestamp) = strftime('%Y-%m','now','start of month','-1 month') THEN date(s.timestamp) END) as last_month
         FROM sign_ins s
         JOIN users u ON s.loginname = u.loginname
-        WHERE s.timestamp >= date('now','-180 days')
+        WHERE date(s.timestamp) >= date('now','localtime','-179 days')
         GROUP BY s.loginname
         ORDER BY d15 DESC
     '''
@@ -239,7 +239,7 @@ def stats():
     for s in stats_list:
         loginname = s['loginname']
         count_30 = conn.execute(
-            "SELECT COUNT(DISTINCT date(timestamp)) FROM sign_ins WHERE loginname=? AND timestamp >= date('now','-30 days')",
+            "SELECT COUNT(DISTINCT date(timestamp)) FROM sign_ins WHERE loginname=? AND date(timestamp) >= date('now','localtime','-29 days')",
             (loginname,)
         ).fetchone()[0]
         bar_labels.append(s['name'])

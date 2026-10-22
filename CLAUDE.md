@@ -13,7 +13,7 @@ ZGL 组织活跃看板系统，包含 IC 卡签到、团队工作规划/进度�
 python app.py                    # 启动在 0.0.0.0:5000，数据库表自动创建
 
 # 预发环境（本地测试）
-python app.py pre                # 启动在 0.0.0.0:5101，使用 attendance_pre.db
+python app.py pre                # 启动在 0.0.0.0:5101，使用 dbs/attendance_pre.db
 
 # 已启用 llm_usage_sync 时，手动执行一次 Proxy 用量同步
 python usage_sync.py
@@ -29,8 +29,9 @@ sudo python3 checkin_usb.py
 
 **端侧-服务端分离 + 服务端 Blueprint 模块化架构：**
 
-- **`app.py`**（入口）：创建 Flask app，加载配置，注册 8 个 Blueprint，注册 `fmt_time` Jinja 过滤器（浮点小时 → `"HH:MM"`，如 `6.5` → `06:30`，用于 booking 半点时间显示），启动服务；若配置了钉钉 webhook 则启动 APScheduler 周一 18:30 定时推送 onsite 报告；生产环境每日 06:00 备份主库；启用 `llm_usage_sync` 时，启动后及北京时间每 3 小时同步一次用量镜像
-- **`config.py`**：从 `.config.yml` 的 `server.coding_plan_keys` 加载 Coding Plan Key，集中处理配置校验、脱敏显示和使用登记，导出模块级全局变量（`DB_PATH`, `API_SECRET`, `ALLOWED_CHECKIN_IPS`, `SECRET_KEY`, `DINGTALK_WEBHOOK_URL`, `DINGTALK_SECRET`）
+- **`app.py`**（入口）：创建 Flask app，加载配置，注册 8 个 Blueprint，注册 `fmt_time` Jinja 过滤器（浮点小时 → `"HH:MM"`，如 `6.5` → `06:30`，用于 booking 半点时间显示），启动服务；若配置了钉钉 webhook 则启动 APScheduler 周一 18:30 定时推送 onsite 报告；生产环境每日 07:00 用 SQLite backup API 备份主库与用量镜像库（边车文件不需备份）；启用 `llm_usage_sync` 时，启动后及北京时间每 3 小时同步一次用量镜像
+- **`config.py`**：从 `.config.yml` 加载配置并导出模块级全局变量（`DB_PATH`, `API_SECRET`, `ALLOWED_CHECKIN_IPS`, `SECRET_KEY`, `DINGTALK_WEBHOOK_URL`, `DINGTALK_SECRET`），Coding Plan Key 列表的校验委托 `coding_plan.validate_keys`；`_anchor()` 把配置里的相对路径统一锚定到项目目录（非进程 CWD）
+- **`coding_plan.py`**：Coding Plan Key 领域逻辑——配置条目校验（`validate_keys`）、脱敏展示（`masked`）、领取登记读写（`claim_status` / `change_claim`，含「每人只能登记一个智谱 Key」策略，记录存于镜像库 `coding_plan_claims` 表）
 - **`db.py`**：主业务库连接（`get_db_connection()`）和 21 张表的初始化（`ensure_tables()`）
 - **`db_usage.py`**：独立用量镜像库的路径校验、连接、8 张表初始化和页面只读查询；与 `db.py` 分别管理不同的 SQLite 文件，包含 Coding Plan Key 使用登记表 `coding_plan_claims`
 - **`auth.py`**：认证基础设施——用户集（`.users.txt`）、HMAC token 生成/验证、装饰器（`login_required`, `token_required`, `checkin_ip_required`）
@@ -62,9 +63,9 @@ sudo python3 checkin_usb.py
 
 ## Database
 
-主业务库使用 SQLite（`attendance.db` / `attendance_pre.db`），21 张表由 `db.py: ensure_tables()` 创建。所有"行创建时刻"型时间戳列的默认值统一为 `datetime('now','localtime')`（服务器本地时间）；业务时刻/生命周期时刻列（如 sign_ins.timestamp、closed_at、departed_at）无默认值。主库连接开启外键校验（`PRAGMA foreign_keys=ON`）。
+主业务库使用 SQLite（`dbs/attendance.db` / `dbs/attendance_pre.db`，配置可写相对路径，锚定到项目目录），21 张表由 `db.py: ensure_tables()` 创建；`db.py` 在连接前自动创建父目录。所有"行创建时刻"型时间戳列的默认值统一为 `datetime('now','localtime')`（服务器本地时间）；业务时刻/生命周期时刻列（如 sign_ins.timestamp、closed_at、departed_at）无默认值。主库连接开启外键校验（`PRAGMA foreign_keys=ON`）。
 
-API 用量使用 `llm_usage_sync.mirror_db_path` 指定的另一份 SQLite 文件，由 `db_usage.py: initialize()` 建表；路径必须为绝对路径且不能与主业务库相同。
+API 用量使用 `llm_usage_sync.mirror_db_path` 指定的另一份 SQLite 文件，由 `db_usage.py: initialize()` 建表；路径不能与主业务库相同（`db_usage.validate_path()` 校验，`config.py` 锚定后传入）。
 
 **身份与卡片：**
 - `users`：账号（loginname PK, name, email）。email 全局唯一（UNIQUE，允许多行 NULL）；**登录即建档**（name 以登录名占位），姓名/邮箱仅本人经 `/update_profile` 修改
@@ -106,7 +107,7 @@ API 用量使用 `llm_usage_sync.mirror_db_path` 指定的另一份 SQLite 文�
 - `usage_sync_runs`、`usage_sync_state`：同步状态、错误信息与增量游标；明细按页提交，失败后可从游标继续
 - `coding_plan_claims`：Coding Plan Key 的 `key_id`、`username`、`claimed_at`，复合主键避免同一人重复计数；完整 Key 只在私有 `.config.yml`，同步不会清理登记表
 
-`db_usage.py` 提供路径校验、连接、建表和页面查询；同步写入 SQL 位于 `usage_sync.py`，Coding Plan 领取登记的读写函数目前位于 `config.py`。因此它与 `db.py` 对标的是“各自数据库的基础模块”，并非两份完全相同的 CRUD 接口。
+`db_usage.py` 提供路径校验、连接、建表和页面查询；同步写入 SQL 位于 `usage_sync.py`，Coding Plan 领取登记的读写函数位于 `coding_plan.py`。因此它与 `db.py` 对标的是“各自数据库的基础模块”，并非两份完全相同的 CRUD 接口。
 
 **存量库迁移：** 老库（UTC 默认值 + 补丁触发器结构）用 `scripts/rebuild_schema.py` 一次性重建（改名临时表→按最新 DDL 重建→拷回→删临时表；自动备份，外键/行数/完整性校验通过才提交）。
 
@@ -159,21 +160,24 @@ API 用量使用 `llm_usage_sync.mirror_db_path` 指定的另一份 SQLite 文�
 
 所有敏感配置集中在 `.config.yml`，由 `config.py`（服务端）和 `checkin_usb.py` 通过 `yaml.safe_load()` 统一读取：
 - 服务端：`db_path`、`secret_key`、`api_secret`、`allowed_checkin_ips`、`dingtalk_webhook_url`、`dingtalk_secret`
-- API 用量同步：在 `server.llm_usage_sync` 配置 `enabled`、Proxy 的 `base_url` 和只读 `dashboard_token`、独立绝对路径 `mirror_db_path`、`sync_start_month`；预发环境须单独配置 `pre.llm_usage_sync.mirror_db_path`，否则预发同步会被禁用
+- API 用量同步：在 `server.llm_usage_sync` 配置 `enabled`、Proxy 的 `base_url` 和只读 `dashboard_token`、独立 `mirror_db_path`（相对路径锚定到项目目录，建议 `dbs/llm_usage_mirror.db`）、`sync_start_month`；预发环境须单独配置 `pre.llm_usage_sync.mirror_db_path`，否则预发同步会被禁用
 - Coding Plan Key：在私有 `.config.yml` 的 `server.coding_plan_keys` 列表中配置 `id`、`platform`、`label`、`secret`；预发环境默认继承该列表，更换 Key 时保留 `id` 可保留已登记的使用人数
 - 升级已有部署时，先将旧 `.coding_plan_keys.yml` 的 `keys` 列表迁入 `.config.yml` 的 `server.coding_plan_keys`，再更新代码并重启服务；新版本不再读取旧文件
 - 端侧：`server_url`、`db_path`、`api_secret`
 
 部署流程：`cp config.example.yml .config.yml` → 编辑实际值
 
-`.config.yml` 和 `.users.txt` 已在 `.gitignore` 中，不会提交到仓库。
+**路径约定：** 配置中数据库路径推荐写相对路径（如 `dbs/attendance.db`），`config.py: _anchor()` 统一锚定到项目目录而非进程 CWD，因此仓库整体 mv 无需改配置，也不依赖 systemd `WorkingDirectory`；仓库外路径（如 `db_bak_dir` 备份目录）写绝对路径。
+
+`.config.yml`、`.users.txt` 和 `dbs/` 数据库目录已在 `.gitignore` 中，不会提交到仓库。
 
 `.config.yml` 由 `config.py` 在进程启动时读取，修改 Coding Plan Key 或用量同步设置后需重启 Dashboard 服务；`platform_models.yml` 由用量页面在每次请求时读取，修改展示文字后刷新页面即可。用量同步调度器内置于 Dashboard 进程；Gunicorn 多 worker 会分别启动调度器，部署时应使用单 worker。
 
 ## File List
 
 - `app.py` — 服务端入口（Flask app + Blueprint 注册 + APScheduler 定时任务）
-- `config.py` — 配置加载（.config.yml → 模块级全局）与 Coding Plan Key 校验、脱敏、使用登记
+- `config.py` — 配置加载（.config.yml → 模块级全局）与相对路径锚定
+- `coding_plan.py` — Coding Plan Key 领域逻辑（校验、脱敏、领取登记）
 - `db.py` — 主业务库连接与表初始化
 - `db_usage.py` — 独立用量镜像库连接、8 张表初始化与页面查询
 - `auth.py` — 认证基础设施（用户集、HMAC token、装饰器）
@@ -191,6 +195,7 @@ API 用量使用 `llm_usage_sync.mirror_db_path` 指定的另一份 SQLite 文�
 - `platform_models.yml` — 平台卡片的模型介绍和计费链接，修改后刷新页面生效
 - `checkin_usb.py` — 树莓派刷卡客户端
 - `templates/` — Jinja2 模板
+- `dbs/` — SQLite 数据库文件目录（主业务库与用量镜像库，含 WAL/锁等边车文件；gitignore，运行时生成）
 - `environment.yml` — Conda 环境定义（`flask_app`，Python 3.10）
 - `.config.yml` — 运行配置（敏感，不提交）
 - `config.example.yml` — 配置示例模板，包含 Coding Plan Key 槽位
