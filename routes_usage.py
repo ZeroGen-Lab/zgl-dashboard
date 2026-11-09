@@ -76,12 +76,15 @@ def load_platform_info(path=INFO_PATH, *, content=None):
 
 def model_chart(series, dates):
     """Prepare stacked daily bars for the selected calendar month."""
+    dates = list(reversed(dates))
+    models = []
+    for model, values in sorted(series.items()):
+        daily_values = [values.get(date) or None for date in dates]
+        if any(daily_values):
+            models.append({'name': model, 'values': daily_values})
     return {
-        'labels': [date[5:] for date in reversed(dates)],
-        'models': [
-            {'name': model, 'values': [values.get(date, 0) for date in reversed(dates)]}
-            for model, values in sorted(series.items())
-        ],
+        'labels': [date[5:] for date in dates],
+        'models': models,
     }
 
 

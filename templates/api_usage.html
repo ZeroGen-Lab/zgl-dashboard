@@ -119,7 +119,7 @@
                         <div class="usage-member-chart-title mb-1"><i>模型使用状况</i></div>
                         <div class="text-muted small mb-2"><i>{{ chart_dates[-1] }} 至 {{ chart_dates[0] }} · 每日 Token</i></div>
                         <div class="usage-chart"><canvas role="img" aria-label="{{ card.name }}所选自然月各模型每日 Token 柱状图"></canvas></div>
-                        <p class="text-muted small mb-0" data-chart-empty hidden>所选自然月暂无调用记录。</p>
+                        <p class="text-muted small mb-0" data-chart-empty hidden>所选自然月暂无 Token 用量。</p>
                     </div>
                 </details>
                 <div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mt-3">
@@ -214,7 +214,7 @@
             <div class="usage-member-chart-title mb-1"><i>模型使用状况</i></div>
             <div class="text-muted small mb-2"><i>{{ chart_dates[-1] }} 至 {{ chart_dates[0] }} · 每日 Token</i></div>
             <div class="usage-chart"><canvas role="img" aria-label="{{ member.name }}所选自然月各模型每日 Token 柱状图"></canvas></div>
-            <p class="text-muted small mb-0" data-chart-empty hidden>所选自然月暂无调用记录。</p>
+            <p class="text-muted small mb-0" data-chart-empty hidden>所选自然月暂无 Token 用量。</p>
         </div>
     </details>
     {% endfor %}
@@ -350,7 +350,7 @@ print(response.choices[0].message.content)</code></pre>
             const data = charts[panel.dataset.chartId];
             const empty = panel.querySelector('[data-chart-empty]');
             if (!data || !data.models.length || !window.Chart) {
-                empty.textContent = !window.Chart ? '图表暂时无法加载，请稍后刷新页面。' : '所选自然月暂无调用记录。';
+                if (!window.Chart) empty.textContent = '图表暂时无法加载，请稍后刷新页面。';
                 empty.hidden = false;
                 panel.querySelector('.usage-chart').hidden = true;
                 return;
