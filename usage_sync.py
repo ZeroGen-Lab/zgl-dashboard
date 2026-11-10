@@ -238,13 +238,11 @@ def fetch_records(session, base_url, token, month, timeout):
 def process_lock(path):
     """Prevent a manual sync from overlapping the scheduled sync."""
     with open(str(path) + '.sync.lock', 'a+b') as lock:
-        lock.seek(0)
-        if not lock.read(1):
-            lock.seek(0)
-            lock.write(b'0')
-            lock.flush()
-        lock.seek(0)
         try:
+            if os.fstat(lock.fileno()).st_size == 0:
+                lock.write(b'0')
+                lock.flush()
+            lock.seek(0)
             if os.name == 'nt':
                 import msvcrt
                 msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
