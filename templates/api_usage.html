@@ -8,7 +8,15 @@
     .usage-platform-card .usage-token-total { color: #285f9d; }
     .usage-section-title { color: #2867aa; font-size: .95rem; font-weight: 700; }
     .usage-description-line { min-height: 1.5em; }
-    .usage-section-divider { height: 0; border: 0; border-top: 1px solid #e3e9ef; background: none; opacity: 1; }
+    .coding-plan-section { --plan-accent: #424fa2; background: #f2effb; border: 1px solid #e1daf5; border-radius: 12px; }
+    .coding-plan-card { border-top: 3px solid #9382d7; }
+    .coding-plan-section .coding-plan-heading, .coding-plan-link { color: var(--plan-accent); }
+    .coding-plan-link:hover { color: #2c3681; }
+    .coding-plan-label { background: #e7dff9; color: var(--plan-accent); }
+    .coding-plan-key .btn-outline-primary { color: var(--plan-accent); border-color: var(--plan-accent); }
+    .coding-plan-key .btn-outline-primary:hover:not(:disabled),
+    .coding-plan-key .btn-outline-primary:active:not(:disabled) { color: #fff; background: var(--plan-accent); }
+    .coding-plan-key .btn-outline-primary:focus { box-shadow: 0 0 0 .2rem rgb(81 66 162 / 25%); }
     .usage-month-picker { position: relative; }
     .usage-month-picker > summary { list-style: none; cursor: pointer; min-width: 150px; }
     .usage-month-picker > summary::-webkit-details-marker { display: none; }
@@ -32,6 +40,7 @@
 </style>
 {% endblock %}
 {% block content %}
+{% set month_label = '%04d年%d月' | format(selected_year, selected_month) %}
 
 <div class="card p-4 mb-4">
     <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-3">
@@ -47,7 +56,7 @@
             <input id="usage-month-value" type="hidden" name="month" value="{{ month }}">
             <details class="usage-month-picker" id="usage-month-picker">
                 <summary class="btn btn-outline-secondary d-flex align-items-center justify-content-between gap-3" aria-label="选择年份和月份">
-                    <span><i class="bi bi-calendar3 me-2" aria-hidden="true"></i><span id="usage-month-label">{{ selected_year }}年{{ '%02d' | format(selected_month) }}月</span></span>
+                    <span><i class="bi bi-calendar3 me-2" aria-hidden="true"></i><span id="usage-month-label">{{ month_label }}</span></span>
                     <i class="bi bi-chevron-down small" aria-hidden="true"></i>
                 </summary>
                 <div class="usage-month-popover">
@@ -103,9 +112,9 @@
 
 <section class="mb-4">
     <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2">
-        <h5 class="mb-0">{{ month }} 平台月度用量</h5>
+        <h5 class="mb-0">{{ month_label }} 平台月度用量</h5>
     </div>
-    <p class="text-muted small mb-2">所有用量以 M（百万 Token）展示，保留两位小数；1 M = 1,000,000 Token。Token 数按 total_tokens 汇总；实际费用与 Coding Plan 积分以各平台账单为准。</p>
+    <p class="text-muted small mb-2">统计通过转发平台调用的 Token。总用量按 total_tokens 汇总，以 M（百万 Token）展示，保留两位小数。实际费用以各平台账单为准。</p>
     <div class="row g-3">
         {% for card in cards %}
         <div class="col-12 col-lg-6">
@@ -119,12 +128,12 @@
                         <div class="usage-member-chart-title mb-1"><i>模型使用状况</i></div>
                         <div class="text-muted small mb-2"><i>{{ chart_dates[-1] }} 至 {{ chart_dates[0] }} · 每日 Token</i></div>
                         <div class="usage-chart"><canvas role="img" aria-label="{{ card.name }}所选自然月各模型每日 Token 柱状图"></canvas></div>
-                        <p class="text-muted small mb-0" data-chart-empty hidden>所选自然月暂无调用记录。</p>
+                        <p class="text-muted small mb-0" data-chart-empty hidden>所选自然月暂无 Token 用量。</p>
                     </div>
                 </details>
                 <div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mt-3">
                     <div>
-                        <div class="text-muted small">{{ '本月' if is_current_month else month + ' ' }}消耗 Token</div>
+                        <div class="text-muted small">{{ '本月' if is_current_month else month_label }}消耗 Token</div>
                         <div class="fs-3 fw-bold usage-token-total">{{ tokens_m(card.tokens) }}</div>
                     </div>
                     <div class="text-muted small text-end text-nowrap ms-auto">
@@ -145,24 +154,52 @@
                     {% else %}
                     <div class="text-muted">暂无模型介绍。</div>
                     {% endif %}
-                {% if card.info.pricing_url %}
-                <a class="d-inline-block mt-2" href="{{ card.info.pricing_url }}" target="_blank" rel="noopener noreferrer">查看官方计费规则 <i class="bi bi-box-arrow-up-right"></i></a>
-                {% endif %}
-                {% if card.id in ('deepseek', 'zhipu') %}
-                    <hr class="usage-section-divider my-3">
-                    <div class="usage-section-title mb-2">Coding Plan 说明</div>
-                    {% set plan = card.info.coding_plan %}
-                    {% if plan %}
-                    {% if plan.title %}<div class="fw-semibold"><strong>{{ plan.title }}</strong></div>{% endif %}
-                    {% for line in plan.lines %}<div class="usage-description-line">{{ line }}</div>{% endfor %}
-                    {% if plan.note %}<div class="text-muted mt-1">{{ plan.note }}</div>{% endif %}
-                    {% if plan.pricing_url %}<a class="d-inline-block mt-2" href="{{ plan.pricing_url }}" target="_blank" rel="noopener noreferrer">查看 Coding Plan 官方说明 <i class="bi bi-box-arrow-up-right"></i></a>{% endif %}
+                    {% if card.info.pricing_url %}
+                    <a class="d-inline-block mt-2" href="{{ card.info.pricing_url }}" target="_blank" rel="noopener noreferrer">查看官方计费规则 <i class="bi bi-box-arrow-up-right"></i></a>
                     {% endif %}
-                {% endif %}
                 </div>
-                {% if card.id in ('deepseek', 'zhipu') %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</section>
+
+<section class="coding-plan-section p-3 p-md-4 mb-4" aria-labelledby="coding-plan-title">
+    <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+        <h5 id="coding-plan-title" class="coding-plan-heading mb-0">Coding Plan</h5>
+        <span class="badge rounded-pill coding-plan-label">官方直连</span>
+    </div>
+    <p class="text-muted small mb-3">按各平台官方说明配置客户端，在这里登记并领取厂商 Key。Dashboard 仅展示 Key 的登记情况，直连调用的用量、积分和账单在对应平台查看。</p>
+    <div class="row g-3">
+        {% for card in cards if card.id in ('deepseek', 'zhipu') %}
+        <div class="col-12 col-lg-6">
+            <div class="card coding-plan-card p-3 h-100">
+                <h6 class="coding-plan-heading fw-bold mb-2">{{ card.name }}</h6>
+                {% set plan = card.info.coding_plan %}
+                <div class="small flex-grow-1">
+                    {% if plan %}
+                    {% if plan.title %}<div class="fw-semibold mb-1"><strong>{{ plan.title }}</strong></div>{% endif %}
+                    {% for line in plan.lines %}<div class="usage-description-line">{{ line }}</div>{% endfor %}
+                    {% if plan.note %}<div class="text-muted mt-2">{{ plan.note }}</div>{% endif %}
+                    {% if plan.endpoints %}
+                    <ul class="list-unstyled mt-3 mb-0">
+                        {% for endpoint in plan.endpoints %}
+                        <li class="border-top py-2">
+                            <div class="d-flex flex-wrap align-items-baseline justify-content-between gap-2">
+                                <span class="fw-semibold">{{ endpoint.label }}</span>
+                                {% if endpoint.setup_url %}<a class="coding-plan-link" href="{{ endpoint.setup_url }}" target="_blank" rel="noopener noreferrer" aria-label="{{ endpoint.label }}官方接入指南">官方指南 <i class="bi bi-box-arrow-up-right" aria-hidden="true"></i></a>{% endif %}
+                            </div>
+                            {% if endpoint.description %}<div class="text-muted mt-1">{{ endpoint.description }}</div>{% endif %}
+                            <div class="usage-base-url mt-1"><code class="coding-plan-heading">{{ endpoint.base_url }}</code></div>
+                        </li>
+                        {% endfor %}
+                    </ul>
+                    {% endif %}
+                    {% if plan.pricing_url %}<a class="coding-plan-link d-inline-block mt-2" href="{{ plan.pricing_url }}" target="_blank" rel="noopener noreferrer">查看 Coding Plan 官方说明 <i class="bi bi-box-arrow-up-right"></i></a>{% endif %}
+                    {% endif %}
+                </div>
                 <div class="border-top mt-3 pt-3">
-                    <div class="usage-section-title mb-2">Coding Plan Key</div>
+                    <div class="usage-section-title coding-plan-heading mb-2">Key 登记</div>
                     {% for key in card.coding_keys %}
                     <div class="coding-plan-key py-2 border-bottom" data-key-id="{{ key.id }}" data-key-platform="{{ card.id }}" data-key-claimed="{{ 'true' if key.claimed else 'false' }}">
                         <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
@@ -187,7 +224,6 @@
                     <div class="text-muted small">尚未配置可领取的 Coding Plan Key。</div>
                     {% endfor %}
                 </div>
-                {% endif %}
             </div>
         </div>
         {% endfor %}
@@ -198,7 +234,7 @@
     <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2">
         <h5 class="mb-0">各成员模型用量</h5>
     </div>
-    <p class="text-muted small mb-2">{{ month }} 月度总量按成员汇总；点击成员姓名查看所选自然月各模型的每日用量。</p>
+    <p class="text-muted small mb-2">{{ month_label }}总量按成员汇总。点击成员姓名查看所选自然月各模型的每日用量。</p>
     <div class="card p-4">
     {% if members %}
     {% for member in members %}
@@ -206,7 +242,7 @@
         <summary class="p-3 d-flex flex-wrap align-items-center justify-content-between gap-2" style="cursor: pointer;">
             <span class="fw-semibold">{{ member.name }} <i class="bi bi-chevron-down usage-chart-chevron small"></i></span>
             <span class="d-flex flex-wrap align-items-baseline gap-2 ms-auto">
-                <span class="text-muted small">{{ '本月' if is_current_month else month }}消耗</span>
+                <span class="text-muted small">{{ '本月' if is_current_month else month_label }}消耗</span>
                 <span class="fw-bold">{{ tokens_m(member.total_tokens) }} <span class="text-muted fw-normal small">Token</span></span>
             </span>
         </summary>
@@ -214,7 +250,7 @@
             <div class="usage-member-chart-title mb-1"><i>模型使用状况</i></div>
             <div class="text-muted small mb-2"><i>{{ chart_dates[-1] }} 至 {{ chart_dates[0] }} · 每日 Token</i></div>
             <div class="usage-chart"><canvas role="img" aria-label="{{ member.name }}所选自然月各模型每日 Token 柱状图"></canvas></div>
-            <p class="text-muted small mb-0" data-chart-empty hidden>所选自然月暂无调用记录。</p>
+            <p class="text-muted small mb-0" data-chart-empty hidden>所选自然月暂无 Token 用量。</p>
         </div>
     </details>
     {% endfor %}
@@ -269,9 +305,10 @@ print(response.choices[0].message.content)</code></pre>
     year.addEventListener('input', refresh);
     months.forEach(button => button.addEventListener('click', () => {
         if (!year.reportValidity() || !year.value) return;
-        const month = button.dataset.month.padStart(2, '0');
-        value.value = `${String(year.value).padStart(4, '0')}-${month}`;
-        label.textContent = `${Number(year.value)}年${month}月`;
+        const selectedYear = String(year.value).padStart(4, '0');
+        const month = button.dataset.month;
+        value.value = `${selectedYear}-${month.padStart(2, '0')}`;
+        label.textContent = `${selectedYear}年${month}月`;
         refresh();
         picker.open = false;
         picker.querySelector('summary').focus();
@@ -350,7 +387,7 @@ print(response.choices[0].message.content)</code></pre>
             const data = charts[panel.dataset.chartId];
             const empty = panel.querySelector('[data-chart-empty]');
             if (!data || !data.models.length || !window.Chart) {
-                empty.textContent = !window.Chart ? '图表暂时无法加载，请稍后刷新页面。' : '所选自然月暂无调用记录。';
+                if (!window.Chart) empty.textContent = '图表暂时无法加载，请稍后刷新页面。';
                 empty.hidden = false;
                 panel.querySelector('.usage-chart').hidden = true;
                 return;

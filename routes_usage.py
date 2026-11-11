@@ -69,19 +69,45 @@ def load_platform_info(path=INFO_PATH, *, content=None):
             # Reuse description validation; only accept the documented text fields.
             fields = {key: coding_plan[key] for key in ('title', 'lines', 'note', 'pricing_url')
                       if key in coding_plan}
-            result[platform]['coding_plan'] = load_platform_info(
+            plan = load_platform_info(
                 content={'platforms': {platform: fields}}).get(platform, {})
+            endpoints = coding_plan.get('endpoints', [{
+                'label': 'Base URL',
+                'base_url': coding_plan.get('base_url'),
+                'setup_url': coding_plan.get('setup_url'),
+            }])
+            plan['endpoints'] = []
+            if isinstance(endpoints, list):
+                for endpoint in endpoints:
+                    if not isinstance(endpoint, dict):
+                        continue
+                    label = endpoint.get('label')
+                    base_url = endpoint.get('base_url')
+                    description = endpoint.get('description', '')
+                    setup_url = endpoint.get('setup_url', '')
+                    if (not isinstance(label, str) or not label.strip()
+                            or not isinstance(base_url, str) or not base_url.startswith('https://')
+                            or not isinstance(description, str)):
+                        continue
+                    plan['endpoints'].append({
+                        'label': label, 'base_url': base_url, 'description': description,
+                        'setup_url': setup_url if isinstance(setup_url, str) and setup_url.startswith('https://') else '',
+                    })
+            result[platform]['coding_plan'] = plan
     return result
 
 
 def model_chart(series, dates):
     """Prepare stacked daily bars for the selected calendar month."""
+    dates = list(reversed(dates))
+    models = []
+    for model, values in sorted(series.items()):
+        daily_values = [values.get(date) or None for date in dates]
+        if any(daily_values):
+            models.append({'name': model, 'values': daily_values})
     return {
-        'labels': [date[5:] for date in reversed(dates)],
-        'models': [
-            {'name': model, 'values': [values.get(date, 0) for date in reversed(dates)]}
-            for model, values in sorted(series.items())
-        ],
+        'labels': [date[5:] for date in dates],
+        'models': models,
     }
 
 

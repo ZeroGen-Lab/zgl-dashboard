@@ -14,6 +14,7 @@ from db_usage import connect, initialize, timestamp
 
 LOG = logging.getLogger(__name__)
 MONTH_RE = re.compile(r'^[0-9]{4}-(0[1-9]|1[0-2])$')
+DAILY_DATE_RE = re.compile(r'^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$')
 RETRYABLE = {429, 502, 503, 504}
 
 
@@ -237,13 +238,11 @@ def fetch_records(session, base_url, token, month, timeout):
 def process_lock(path):
     """Prevent a manual sync from overlapping the scheduled sync."""
     with open(str(path) + '.sync.lock', 'a+b') as lock:
-        lock.seek(0)
-        if not lock.read(1):
-            lock.seek(0)
-            lock.write(b'0')
-            lock.flush()
-        lock.seek(0)
         try:
+            if os.fstat(lock.fileno()).st_size == 0:
+                lock.write(b'0')
+                lock.flush()
+            lock.seek(0)
             if os.name == 'nt':
                 import msvcrt
                 msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
@@ -292,6 +291,59 @@ def save_records(conn, records, mirrored):
         output_tokens=excluded.output_tokens,total_tokens=excluded.total_tokens,
         reasoning_tokens=excluded.reasoning_tokens,requested_at=excluded.requested_at,
         mirrored_at=excluded.mirrored_at''', [(*r, mirrored) for r in records])
+
+
+def month_bounds(month):
+    year, part = map(int, month.split('-'))
+    start = month + '-01'
+    end = f'{year + 1:04d}-01-01' if part == 12 else f'{year:04d}-{part + 1:02d}-01'
+    return start, end
+
+
+def fetch_daily_aggregates(session, base_url, token, month, timeout):
+    """Fetch the Proxy's pre-aggregated daily usage rows for one month."""
+    data = fetch(session, base_url, token, '/internal/usage/aggregates', {'month': month}, timeout)
+    if data.get('version') != 2 or data.get('month') != month or data.get('timezone') != 'Asia/Shanghai':
+        raise SyncError('Proxy 日汇总版本、月份或时区不匹配')
+    if not isinstance(data.get('daily_by_key'), list) or not isinstance(data.get('daily_by_member_model'), list):
+        raise SyncError('Proxy 日汇总缺少 daily_by_key 或 daily_by_member_model')
+
+    def parse(sources, dimension_fields):
+        rows = []
+        for source in sources:
+            if not isinstance(source, dict):
+                raise SyncError('Proxy 日汇总行无效')
+            usage_date = source.get('usage_date')
+            if (not isinstance(usage_date, str) or DAILY_DATE_RE.fullmatch(usage_date) is None
+                    or usage_date[:7] != month):
+                raise SyncError('Proxy 日汇总日期无效')
+            values = [text_field(source.get(field), field) for field in dimension_fields]
+            values += [integer_field(source.get(field), field) for field in (
+                'input_tokens', 'output_tokens', 'total_tokens', 'reasoning_tokens')]
+            values.append(time_field(source.get('updated_at'), 'updated_at'))
+            rows.append((usage_date, *values))
+        return rows
+
+    by_key = parse(data['daily_by_key'], ('platform', 'api_key_id', 'model'))
+    by_member_model = parse(data['daily_by_member_model'], ('platform', 'owner_snapshot', 'model'))
+    return by_key, by_member_model
+
+
+def save_daily_aggregates(conn, month, by_key, by_member_model, mirrored):
+    """Snapshot-replace one month of daily aggregates in the local mirror."""
+    start, end = month_bounds(month)
+    conn.execute('DELETE FROM usage_daily_by_key WHERE usage_date>=? AND usage_date<?', (start, end))
+    conn.execute('DELETE FROM usage_daily_by_member_model WHERE usage_date>=? AND usage_date<?',
+                 (start, end))
+    for table, dimension, rows in (
+        ('usage_daily_by_key', 'api_key_id', by_key),
+        ('usage_daily_by_member_model', 'owner_snapshot', by_member_model),
+    ):
+        conn.executemany(f'''INSERT INTO {table} (
+            usage_date, platform, {dimension}, model, input_tokens, output_tokens,
+            total_tokens, reasoning_tokens, source_updated_at, mirrored_at
+        ) VALUES (?,?,?,?,?,?,?,?,?,?)''', [(*row, mirrored) for row in rows])
+
 
 
 def prune_zero_token_records(conn):
@@ -441,6 +493,8 @@ def _sync_usage_incremental(config, primary_path, session, now=None):
     timeout = config.get('timeout_seconds', 20)
     if type(timeout) not in (int, float) or not 1 <= timeout <= 120:
         raise SyncError('LLM 用量超时配置无效')
+    # 默认只拉取 Proxy 预聚合的月汇总与日汇总；显式开启后才继续拉取全部明细镜像。
+    pull_records = bool(config.get('pull_detail_records', False))
     current = (now or datetime.now(timezone(timedelta(hours=8)))).strftime('%Y-%m')
     start = config.get('sync_start_month', current)
     if not valid_month(start) or start > current:
@@ -469,7 +523,8 @@ def _sync_usage_incremental(config, primary_path, session, now=None):
             raise SyncError('Proxy 变化月份列表无效')
         months = sorted({month for month in requested if start <= month <= current})
         errors = []
-        summary_count = record_count = 0
+        summary_count = record_count = daily_count = 0
+        aggregates_ok = True
         with closing(connect(path)) as conn, conn:
             run_id = conn.execute("INSERT INTO usage_sync_runs(started_at,status) VALUES (?,'running')",
                                   (timestamp(),)).lastrowid
@@ -478,10 +533,25 @@ def _sync_usage_incremental(config, primary_path, session, now=None):
                 try:
                     summaries, member_summaries, key_summaries, keys, generated = fetch_summary(
                         session, base_url, token, month, timeout)
+                    aggregate_rows = None
+                    if aggregates_ok:
+                        try:
+                            by_key, by_member_model = fetch_daily_aggregates(
+                                session, base_url, token, month, timeout)
+                        except SyncError as exc:
+                            if str(exc) != 'Proxy HTTP 404':
+                                raise
+                            aggregates_ok = False
+                            LOG.info('Proxy 尚未提供日汇总接口，本次回退为拉取明细')
+                        else:
+                            aggregate_rows = (by_key, by_member_model)
                     mirrored = timestamp()
                     with closing(connect(path)) as conn, conn:
                         save_month_snapshot(conn, month, summaries, member_summaries,
                                             key_summaries, keys, mirrored)
+                        if aggregate_rows is not None:
+                            save_daily_aggregates(conn, month, *aggregate_rows, mirrored)
+                            daily_count += len(aggregate_rows[0]) + len(aggregate_rows[1])
                         conn.execute('UPDATE usage_sync_runs SET source_generated_at=? WHERE id=?',
                                      (generated, run_id))
                     summary_count += len(summaries)
@@ -494,27 +564,30 @@ def _sync_usage_incremental(config, primary_path, session, now=None):
                     conn.execute('''INSERT INTO usage_sync_state(name,cursor_time,cursor_id)
                         VALUES ('monthly',?,0) ON CONFLICT(name) DO UPDATE SET
                         cursor_time=excluded.cursor_time''', (checked_at,))
-            # Replay the cursor's second: older IDs may have finalized later in that same second.
-            cursor_time, cursor_id = record_since, 0
-            try:
-                while True:
-                    records, last, more = fetch_record_changes(
-                        session, base_url, token, cursor_time, cursor_id, timeout)
-                    if records:
-                        mirrored = timestamp()
-                        with closing(connect(path)) as conn, conn:
-                            save_records(conn, records, mirrored)
-                            conn.execute('''INSERT INTO usage_sync_state(name,cursor_time,cursor_id)
-                                VALUES ('records',?,?) ON CONFLICT(name) DO UPDATE SET
-                                cursor_time=excluded.cursor_time,cursor_id=excluded.cursor_id''', last)
-                        record_count += len(records)
-                        cursor_time, cursor_id = last
-                    if not more:
-                        break
-            except (SyncError, requests.RequestException, sqlite3.Error, OSError) as exc:
-                errors.append('records')
-                LOG.warning('明细增量同步失败：%s',
-                            str(exc) if isinstance(exc, SyncError) else '数据库或网络错误')
+            if pull_records or not aggregates_ok:
+                # Replay the cursor's second: older IDs may have finalized later in that same second.
+                cursor_time, cursor_id = record_since, 0
+                try:
+                    while True:
+                        records, last, more = fetch_record_changes(
+                            session, base_url, token, cursor_time, cursor_id, timeout)
+                        if records:
+                            mirrored = timestamp()
+                            with closing(connect(path)) as conn, conn:
+                                save_records(conn, records, mirrored)
+                                conn.execute('''INSERT INTO usage_sync_state(name,cursor_time,cursor_id)
+                                    VALUES ('records',?,?) ON CONFLICT(name) DO UPDATE SET
+                                    cursor_time=excluded.cursor_time,cursor_id=excluded.cursor_id''', last)
+                            record_count += len(records)
+                            cursor_time, cursor_id = last
+                        if not more:
+                            break
+                except (SyncError, requests.RequestException, sqlite3.Error, OSError) as exc:
+                    errors.append('records')
+                    LOG.warning('明细增量同步失败：%s',
+                                str(exc) if isinstance(exc, SyncError) else '数据库或网络错误')
+            else:
+                LOG.info('已启用聚合拉取，跳过明细同步（records 游标保留，可随时开启 pull_detail_records 续拉）')
             status = 'success' if not errors else ('partial' if len(errors) < len(months) + 1 else 'error')
             deleted_count = 0
             with closing(connect(path)) as conn, conn:
@@ -529,7 +602,8 @@ def _sync_usage_incremental(config, primary_path, session, now=None):
                 raise SyncError('增量同步失败：' + ', '.join(errors))
             LOG.info('B 端已删除 %s 之前的明细 %d 条', cutoff, deleted_count)
             return {'months': len(months), 'records': record_count, 'summaries': summary_count,
-                    'records_deleted': deleted_count, 'zero_token_records_deleted': zero_deleted_count}
+                    'daily': daily_count, 'records_deleted': deleted_count,
+                    'zero_token_records_deleted': zero_deleted_count}
         except Exception:
             with closing(connect(path)) as conn, conn:
                 conn.execute('''UPDATE usage_sync_runs SET finished_at=?,status='error',

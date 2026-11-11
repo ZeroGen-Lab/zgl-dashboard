@@ -132,6 +132,8 @@ def initialize(path, primary_path):
             );
         ''')
         with conn:
+            conn.execute('BEGIN IMMEDIATE')
+            _initialize_daily_tables(conn)
             member_count = conn.execute('SELECT count(*) FROM usage_monthly_by_member').fetchone()[0]
             key_count = conn.execute('SELECT count(*) FROM usage_monthly_by_key').fetchone()[0]
             if member_count == 0 and key_count == 0:
@@ -153,6 +155,38 @@ def initialize(path, primary_path):
         os.chmod(path, 0o600)
 
 
+def _initialize_daily_tables(conn):
+    for table, dimension in (('usage_daily_by_key', 'api_key_id'),
+                             ('usage_daily_by_member_model', 'owner_snapshot')):
+        columns = {row['name'] for row in conn.execute(f'PRAGMA table_info({table})')}
+        legacy = 'success_calls' in columns
+        if columns and not legacy:
+            continue
+        if legacy:
+            conn.execute(f'ALTER TABLE {table} RENAME TO {table}_legacy')
+        conn.execute(f"""CREATE TABLE {table} (
+            usage_date TEXT NOT NULL,
+            platform TEXT NOT NULL,
+            {dimension} TEXT NOT NULL,
+            model TEXT NOT NULL,
+            input_tokens INTEGER NOT NULL DEFAULT 0,
+            output_tokens INTEGER NOT NULL DEFAULT 0,
+            total_tokens INTEGER NOT NULL DEFAULT 0,
+            reasoning_tokens INTEGER NOT NULL DEFAULT 0,
+            source_updated_at TEXT NOT NULL,
+            mirrored_at TEXT NOT NULL,
+            PRIMARY KEY (usage_date, platform, {dimension}, model)
+        )""")
+        if legacy:
+            model = "model" if 'model' in columns else "'历史未细分'"
+            conn.execute(f"""INSERT INTO {table}
+                SELECT usage_date, platform, {dimension}, {model},
+                       input_tokens, output_tokens, total_tokens, reasoning_tokens,
+                       source_updated_at, mirrored_at
+                FROM {table}_legacy""")
+            conn.execute(f'DROP TABLE {table}_legacy')
+
+
 def read_dashboard(path, month):
     """Return local aggregates without creating a missing mirror file."""
     if not path or not Path(path).is_file():
@@ -172,12 +206,24 @@ def read_dashboard(path, month):
             start = month + '-01'
             year, part = map(int, month.split('-'))
             end = f'{year + 1:04d}-01-01' if part == 12 else f'{year:04d}-{part + 1:02d}-01'
-            daily = [dict(r) for r in conn.execute('''
-                SELECT substr(requested_at,1,10) usage_date, api_key_id, SUM(total_tokens) total_tokens
-                FROM usage_records WHERE requested_at>=? AND requested_at<?
-                  AND status IN ('success','error')
-                GROUP BY usage_date, api_key_id ORDER BY usage_date DESC, api_key_id
-            ''', (start, end))]
+            # 优先使用 Proxy 预聚合的日汇总；尚未同步聚合的月份回退到本地明细。
+            daily = []
+            try:
+                daily = [dict(r) for r in conn.execute('''
+                    SELECT usage_date, api_key_id, SUM(total_tokens) total_tokens FROM usage_daily_by_key
+                    WHERE usage_date>=? AND usage_date<?
+                    GROUP BY usage_date, platform, api_key_id
+                    ORDER BY usage_date DESC, api_key_id
+                ''', (start, end))]
+            except sqlite3.Error:
+                pass
+            if not daily:
+                daily = [dict(r) for r in conn.execute('''
+                    SELECT substr(requested_at,1,10) usage_date, api_key_id, SUM(total_tokens) total_tokens
+                    FROM usage_records WHERE requested_at>=? AND requested_at<?
+                      AND status IN ('success','error')
+                    GROUP BY usage_date, api_key_id ORDER BY usage_date DESC, api_key_id
+                ''', (start, end))]
             labels = {r['api_key_id']: r['label'] for r in conn.execute('SELECT api_key_id,label FROM usage_key_metadata')}
             return {'latest': dict(latest) if latest else None,
                     'last_success': success[0] if success else None,
@@ -198,14 +244,26 @@ def read_member_usage(path, month, start_date, end_date):
                 GROUP BY owner_snapshot
                 ORDER BY total_tokens DESC, owner_snapshot
             ''', (month,))]
-            daily_models = [dict(row) for row in conn.execute('''
-                SELECT owner_snapshot, platform, model, substr(requested_at,1,10) usage_date,
-                       SUM(total_tokens) total_tokens
-                FROM usage_records
-                WHERE requested_at>=? AND requested_at<?
-                  AND status IN ('success','error')
-                GROUP BY owner_snapshot, platform, model, usage_date
-            ''', (start_date, end_date))]
+            # 优先使用 Proxy 预聚合的日汇总；尚未同步聚合的月份回退到本地明细。
+            daily_models = []
+            try:
+                daily_models = [dict(row) for row in conn.execute('''
+                    SELECT owner_snapshot, platform, model, usage_date, total_tokens
+                    FROM usage_daily_by_member_model
+                    WHERE usage_date>=? AND usage_date<?
+                    ORDER BY owner_snapshot, platform, model, usage_date
+                ''', (start_date, end_date))]
+            except sqlite3.Error:
+                pass
+            if not daily_models:
+                daily_models = [dict(row) for row in conn.execute('''
+                    SELECT owner_snapshot, platform, model, substr(requested_at,1,10) usage_date,
+                           SUM(total_tokens) total_tokens
+                    FROM usage_records
+                    WHERE requested_at>=? AND requested_at<?
+                      AND status IN ('success','error')
+                    GROUP BY owner_snapshot, platform, model, usage_date
+                ''', (start_date, end_date))]
             return {'monthly': monthly, 'daily_models': daily_models}
     except sqlite3.Error:
         return None

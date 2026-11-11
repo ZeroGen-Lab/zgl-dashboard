@@ -1,8 +1,9 @@
 # 平台卡片中的模型介绍。修改后刷新 API 用量页面即可生效，无需重启服务。
 # 每个平台可编辑 title、lines、note 和 pricing_url；lines 按顺序显示。
 # 平台顶层字段为参考价格说明；deepseek/zhipu 的 coding_plan 下同名字段为 Coding Plan 说明。
+# coding_plan.endpoints 按列表顺序显示，条目可增删。每条可设 label、description、base_url 和 setup_url。
 # 个人令牌提示；设为 '' 可隐藏，修改后刷新即可生效。
-member_token_note: '调用时将上方完整令牌填入 API Key，请勿分享给他人。'
+member_token_note: '调用时使用推荐 Base URL，将上方完整令牌填入 API Key，请勿分享给他人。'
 
 platforms:
   bailian:
@@ -27,10 +28,20 @@ platforms:
     coding_plan:
       title: ''
       lines:
-        - '按量计费，可按照官方配置接入Claude Code，不接受转发。'
+        - 'DeepSeek本身无token套餐。'
+        - '此处提供可按官方配置接入 Claude Code 的 Key，用量不记录到 dashboard。'
         - '领取 Key 后计入使用人数；不再使用时可以取消登记。'
       note: 高峰为北京时间周一至周五（不含中国法定节假日）09:00–12:00、14:00–18:00；其他时段为空闲。实际费用以官方账单为准。
       pricing_url: ''
+      endpoints:
+        - label: OpenAI Chat Completions
+          description: 用于支持 OpenAI Chat Completions 协议的客户端。
+          base_url: https://api.deepseek.com
+          setup_url: https://api-docs.deepseek.com/zh-cn/
+        - label: Anthropic Messages
+          description: 用于 Claude Code 和兼容 Anthropic Messages 协议的客户端。
+          base_url: https://api.deepseek.com/anthropic
+          setup_url: https://api-docs.deepseek.com/zh-cn/quick_start/agent_integrations/claude_code/
 
   zhipu:
     title: GLM-5.3 · 每百万 Token
@@ -47,11 +58,23 @@ platforms:
         - '高级版：35,000 / 5 小时；155,000 / 周'
         - '积分 =（普通输入 × 6.9 + 缓存命中输入 × 1.7 + 输出 × 24）÷ 10,000（GLM-5.3）'
         - ''
-        - '可按照官方配置接入Claude Code，不接受转发。'
-        - '领取 Key 后计入使用人数；不再使用时可以取消登记。'
+        - '领取 Key 后计入使用人数；不再使用时请取消登记。'
         - '每人只能登记一个智谱 Key；切换前请先停止使用当前 Key。'
       note: 高峰为北京时间工作日 14:00–18:00；非高峰积分减半。
       pricing_url: https://docs.bigmodel.cn/cn/coding-plan/team
+      endpoints:
+        - label: OpenAI Chat Completions
+          description: 用于支持 OpenAI Chat Completions 协议的编程工具。
+          base_url: https://open.bigmodel.cn/api/coding/paas/v4
+          setup_url: https://docs.bigmodel.cn/cn/coding-plan/quick-start
+        - label: Anthropic Messages
+          description: 用于 Claude Code 和兼容 Anthropic Messages 协议的编程工具。
+          base_url: https://open.bigmodel.cn/api/anthropic
+          setup_url: https://docs.bigmodel.cn/cn/coding-plan/tool/claude
+        - label: OpenAI Responses
+          description: 用于 Codex 和兼容 OpenAI Responses 协议的编程工具。
+          base_url: https://open.bigmodel.cn/api/v1
+          setup_url: https://docs.bigmodel.cn/cn/coding-plan/tool/codex
 
   kimi:
     title: 预备参考：最新旗舰 Kimi K3 · 每百万 Token
